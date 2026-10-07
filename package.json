@@ -4,9 +4,13 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/node": "^26.6.4"
   },
   "peerDependencies": {
-    "typescript": "^7"
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
   }
 }
