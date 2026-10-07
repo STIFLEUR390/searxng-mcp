@@ -147,7 +147,7 @@ describe("formatSearchResponse", () => {
     );
     expect(text).toContain("image: https://img.example.org/full.jpg");
     expect(text).toContain("thumbnail: https://img.example.org/thumb.jpg");
-    expect(text).toContain("(images)");
+    expect(text).toContain('"test", images');
   });
 
   test("reports filtered totals", () => {

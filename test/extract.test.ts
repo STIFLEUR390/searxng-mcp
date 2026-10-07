@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { ExtractError, extractFromHtml, fetchAndExtract } from "../src/extract.ts";
+import type { FetchFn } from "../src/client.ts";
 
 const PAGE = `<!doctype html>
 <html lang="en">
@@ -140,12 +141,12 @@ describe("extractFromHtml", () => {
 describe("fetchAndExtract", () => {
   const html = "<html><head><title>T</title></head><body><article><p>Body text</p></article></body></html>";
 
-  function mockFetch(body: string, init: { status?: number; contentType?: string } = {}) {
-    return (async () =>
+  function mockFetch(body: string, init: { status?: number; contentType?: string } = {}): FetchFn {
+    return async () =>
       new Response(body, {
         status: init.status ?? 200,
         headers: { "Content-Type": init.contentType ?? "text/html; charset=utf-8" },
-      })) as typeof fetch;
+      });
   }
 
   test("fetches and extracts", async () => {

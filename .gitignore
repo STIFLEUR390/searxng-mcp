@@ -1,34 +1,18 @@
-# dependencies (bun install)
-node_modules
+# Dependencies
+node_modules/
 
-# output
-out
-dist
-*.tgz
+# Logs
+*.log
+npm-debug.log*
 
-# code coverage
-coverage
-*.lcov
-
-# logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-
-# dotenv environment variable files
+# Env / editor
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# caches
-.eslintcache
-.cache
-*.tsbuildinfo
-
-# IntelliJ based IDEs
-.idea
-
-# Finder (MacOS) folder config
+.env.*
 .DS_Store
+*.swp
+
+# Test/coverage artifacts
+coverage/
+
+# NOTE: dist/ is intentionally committed so the package can be installed
+# globally (bun/npm/npx) directly from GitHub without a build step.

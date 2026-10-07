@@ -1,17 +1,24 @@
 import { describe, expect, test } from "bun:test";
 
-import { SearXNGClient, SearXNGError } from "../src/client.ts";
+import { SearXNGClient, SearXNGError, ipv4Fallback, type FetchFn } from "../src/client.ts";
 
 interface MockCall {
   url: string;
   accept?: string | null;
 }
 
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 function mockFetch(
   responder: (url: URL) => { status?: number; body?: unknown; rawBody?: string },
-): { fetchFn: typeof fetch; calls: MockCall[] } {
+): { fetchFn: FetchFn; calls: MockCall[] } {
   const calls: MockCall[] = [];
-  const fetchFn = (async (input: URL | string | Request, init?: RequestInit) => {
+  const fetchFn: FetchFn = async (input, init) => {
     const url = new URL(String(input));
     const headers = (init?.headers ?? {}) as Record<string, string>;
     calls.push({ url: url.toString(), accept: headers["Accept"] ?? null });
@@ -21,7 +28,7 @@ function mockFetch(
       status,
       headers: { "Content-Type": "application/json" },
     });
-  }) as typeof fetch;
+  };
   return { fetchFn, calls };
 }
 
@@ -103,9 +110,9 @@ describe("SearXNGClient.search", () => {
   });
 
   test("network errors mention the base URL", async () => {
-    const fetchFn = (async () => {
+    const fetchFn: FetchFn = async () => {
       throw new TypeError("fetch failed");
-    }) as typeof fetch;
+    };
     const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
     await expect(client.search({ q: "x" })).rejects.toThrow(/Could not reach SearXNG at http:\/\/localhost:8888/);
   });
@@ -143,6 +150,55 @@ describe("SearXNGClient.autocomplete", () => {
     const { fetchFn } = mockFetch(() => ({ body: { not: "an array" } }));
     const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
     expect(await client.autocomplete("a")).toEqual([]);
+  });
+});
+
+describe("ipv4Fallback", () => {
+  test("rewrites localhost and ::1 to 127.0.0.1", () => {
+    expect(ipv4Fallback(new URL("http://localhost:8888/search"))?.toString()).toBe(
+      "http://127.0.0.1:8888/search",
+    );
+    expect(ipv4Fallback(new URL("http://[::1]:8888/"))?.toString()).toBe("http://127.0.0.1:8888/");
+  });
+
+  test("leaves other hosts alone", () => {
+    expect(ipv4Fallback(new URL("https://searx.example.org/"))).toBeNull();
+    expect(ipv4Fallback(new URL("http://127.0.0.1:8888/"))).toBeNull();
+  });
+});
+
+describe("SearXNGClient IPv4 fallback", () => {
+  test("retries on 127.0.0.1 when localhost connection fails", async () => {
+    const tried: string[] = [];
+    const fetchFn: FetchFn = async (input) => {
+      const url = new URL(String(input));
+      tried.push(url.hostname);
+      if (url.hostname === "localhost") throw new TypeError("fetch failed");
+      return jsonResponse({ query: "x", results: [] });
+    };
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    const resp = await client.search({ q: "x" });
+    expect(resp.results).toEqual([]);
+    expect(tried).toEqual(["localhost", "127.0.0.1"]);
+  });
+
+  test("does not retry when the first attempt succeeds", async () => {
+    const tried: string[] = [];
+    const fetchFn: FetchFn = async (input) => {
+      tried.push(new URL(String(input)).hostname);
+      return jsonResponse({ query: "x", results: [] });
+    };
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await client.search({ q: "x" });
+    expect(tried).toEqual(["localhost"]);
+  });
+
+  test("non-localhost network errors do not trigger a fallback", async () => {
+    const fetchFn: FetchFn = async () => {
+      throw new TypeError("fetch failed");
+    };
+    const client = new SearXNGClient({ baseUrl: "https://searx.example.org", fetchFn });
+    await expect(client.search({ q: "x" })).rejects.toThrow(/searx\.example\.org/);
   });
 });
 

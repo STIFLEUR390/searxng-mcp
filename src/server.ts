@@ -15,7 +15,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { SearXNGClient, SearXNGError } from "./client.ts";
+import { SearXNGClient, SearXNGError, type FetchFn } from "./client.ts";
 import { ExtractError, fetchAndExtract } from "./extract.ts";
 import {
   filterByDomains,
@@ -108,7 +108,7 @@ type SearchArgs = z.infer<z.ZodObject<typeof coreSearchShape>>;
 
 interface ServerOptions {
   /** Fetch implementation override (tests). */
-  fetchFn?: typeof fetch;
+  fetchFn?: FetchFn;
   version?: string;
 }
 

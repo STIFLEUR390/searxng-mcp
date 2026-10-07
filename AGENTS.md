@@ -3,8 +3,12 @@
 ## Project
 
 `searxng-mcp` — an MCP server (SearXNG search) built on `@modelcontextprotocol/sdk`.
-Status: fresh `bun init` scaffold. `index.ts` (the `module` entrypoint) is still
-`console.log("Hello via Bun!")` — the server is not implemented yet.
+Status: implemented. `index.ts` boots a stdio MCP server exposing 7 tools
+(`searxng_search`, `searxng_search_news`, `searxng_search_images`,
+`searxng_search_videos`, `searxng_autocomplete`, `searxng_config`,
+`searxng_extract_content`). Configured via `SEARXNG_URL` env var or `--url`
+flag (default `http://localhost:8888`). `dist/index.js` is a committed bundle
+used by the `bin` entry for global installs.
 
 ## Runtime & commands
 
@@ -12,8 +16,10 @@ Bun only — no Node/npm/yarn/pnpm (`bun.lock` is the only lockfile).
 
 ```bash
 bun install          # install deps
-bun run index.ts     # run the entrypoint (there are no package.json scripts)
-bun test             # tests (none exist yet; use bun:test, not jest/vitest)
+bun run dev          # run the entrypoint from source
+bun run index.ts     # same (no devDependencies required at runtime)
+bun test             # tests (bun:test)
+bun run build        # bundle to dist/index.js (node target)
 bunx tsc --noEmit    # typecheck — no script defined, run this directly
 ```
 

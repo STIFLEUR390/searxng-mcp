@@ -16,6 +16,9 @@ import type {
 
 export type TimeRange = "day" | "month" | "year";
 
+/** Injectable fetch signature (structural subset of the global fetch). */
+export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 export interface SearchParams {
   q: string;
   /** SearXNG categories, e.g. ["general"], ["news"], ["images", "videos"]. */
@@ -32,7 +35,7 @@ export interface SearchParams {
 
 export interface SearXNGClientOptions {
   baseUrl: string;
-  fetchFn?: typeof fetch;
+  fetchFn?: FetchFn;
   /** Per-request timeout in milliseconds (default 30000). */
   timeoutMs?: number;
   userAgent?: string;
@@ -42,12 +45,29 @@ export class SearXNGError extends Error {
   override name = "SearXNGError";
   readonly status?: number;
   readonly baseUrl?: string;
+  /** "network" | "timeout" for transport-level failures. */
+  readonly code?: "network" | "timeout";
 
-  constructor(message: string, status?: number, baseUrl?: string) {
+  constructor(message: string, status?: number, baseUrl?: string, code?: "network" | "timeout") {
     super(message);
     this.status = status;
     this.baseUrl = baseUrl;
+    this.code = code;
   }
+}
+
+/**
+ * Node resolves `localhost` to ::1 first, while many SearXNG instances listen
+ * on IPv4 only. On connection failure, retry once on 127.0.0.1.
+ */
+export function ipv4Fallback(url: URL): URL | null {
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host === "::1") {
+    const alt = new URL(url.toString());
+    alt.hostname = "127.0.0.1";
+    return alt;
+  }
+  return null;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -55,7 +75,7 @@ const DEFAULT_USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/sea
 
 export class SearXNGClient {
   readonly baseUrl: string;
-  private readonly fetchFn: typeof fetch;
+  private readonly fetchFn: FetchFn;
   private readonly timeoutMs: number;
   private readonly userAgent: string;
 
@@ -145,6 +165,24 @@ export class SearXNGClient {
   }
 
   private async getJson(url: URL): Promise<unknown> {
+    try {
+      return await this.requestJson(url);
+    } catch (err) {
+      if (err instanceof SearXNGError && err.code === "network") {
+        const alt = ipv4Fallback(url);
+        if (alt) {
+          try {
+            return await this.requestJson(alt);
+          } catch {
+            // Report the original (localhost) error below.
+          }
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async requestJson(url: URL): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let res: Response;
@@ -163,6 +201,7 @@ export class SearXNGClient {
           `Request to ${this.baseUrl} timed out after ${this.timeoutMs}ms.`,
           undefined,
           this.baseUrl,
+          "timeout",
         );
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -171,6 +210,7 @@ export class SearXNGClient {
           `Check that the instance is running and that SEARXNG_URL is correct.`,
         undefined,
         this.baseUrl,
+        "network",
       );
     } finally {
       clearTimeout(timer);

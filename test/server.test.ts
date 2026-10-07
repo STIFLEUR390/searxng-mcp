@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
-import { SearXNGClient } from "../src/client.ts";
+import { SearXNGClient, type FetchFn } from "../src/client.ts";
 import { createServer } from "../src/server.ts";
 
 function jsonResponse(body: unknown, status = 200) {
@@ -10,6 +10,10 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function htmlResponse(body: string) {
+  return new Response(body, { headers: { "Content-Type": "text/html" } });
 }
 
 const searchBody = {
@@ -38,9 +42,9 @@ const pageHtml = `<!doctype html><html><head><title>Doc</title></head>
 <body><header>Site header</header><article><h1>Doc</h1><p>Useful content here.</p></article>
 <footer>Site footer</footer></body></html>`;
 
-async function connect(fetchFn: typeof fetch) {
+async function connect(fetchFn: FetchFn) {
   const client = new SearXNGClient({ baseUrl: "http://searx.test", fetchFn });
-  const server = createServer(client);
+  const server = createServer(client, { fetchFn });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: "test-client", version: "0.0.0" });
   await Promise.all([server.connect(serverTransport), mcp.connect(clientTransport)]);
@@ -156,9 +160,7 @@ describe("MCP server integration", () => {
   });
 
   test("searxng_extract_content filters chrome and reports removals", async () => {
-    const mcp = await connect(async () =>
-      new Response(pageHtml, { headers: { "Content-Type": "text/html" } }),
-    );
+    const mcp = await connect(async () => htmlResponse(pageHtml));
     const text = textOf(
       await mcp.callTool({
         name: "searxng_extract_content",
@@ -173,7 +175,7 @@ describe("MCP server integration", () => {
   });
 
   test("searxng_extract_content validates the URL argument", async () => {
-    const mcp = await connect(async () => new Response(pageHtml));
+    const mcp = await connect(async () => htmlResponse(pageHtml));
     const result = await mcp.callTool({
       name: "searxng_extract_content",
       arguments: { url: "definitely not a url" },

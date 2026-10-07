@@ -11,6 +11,8 @@
 
 import { parse, type HTMLElement, type Node } from "node-html-parser";
 
+import { ipv4Fallback, type FetchFn } from "./client.ts";
+
 export interface ExtractOptions {
   /** Keep the site <header>/[role=banner] blocks. Default: false (removed). */
   includeHeader?: boolean;
@@ -54,7 +56,7 @@ export class ExtractError extends Error {
 }
 
 export interface FetchDeps {
-  fetchFn?: typeof fetch;
+  fetchFn?: FetchFn;
   timeoutMs?: number;
   userAgent?: string;
   /** Reject HTML bodies larger than this (default 5 MiB). */
@@ -66,6 +68,30 @@ const MAX_LENGTH_CAP = 200_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024;
 const USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/searxng-mcp)";
+
+const ENTITY_MAP: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&apos;": "'",
+  "&nbsp;": " ",
+  "&mdash;": "—",
+  "&ndash;": "–",
+  "&hellip;": "…",
+  "&rsquo;": "’",
+  "&lsquo;": "‘",
+  "&ldquo;": "“",
+  "&rdquo;": "”",
+};
+
+/** Strip HTML markup and decode common entities (used for <pre> raw text). */
+function stripTags(raw: string): string {
+  return raw
+    .replace(/<[^>]*>/g, "")
+    .replace(/&[a-z#0-9]+;/gi, (entity) => ENTITY_MAP[entity.toLowerCase()] ?? entity);
+}
 
 /** Tags dropped unconditionally (never useful as content). */
 const ALWAYS_DROP = new Set([
@@ -314,7 +340,8 @@ function renderNode(node: Node, opts: ExtractOptions): string {
   if (upper === "HR") return "\n---\n";
 
   if (upper === "PRE") {
-    return `\n\`\`\`\n${(el.textContent ?? "").trim()}\n\`\`\`\n`;
+    // node-html-parser keeps <pre> content as raw text (markup included): strip tags.
+    return `\n\`\`\`\n${stripTags(el.textContent ?? "").trim()}\n\`\`\`\n`;
   }
 
   const inner = renderChildren(el, opts);
@@ -372,8 +399,8 @@ export function extractFromHtml(html: string, url: string, opts: ExtractOptions 
   const root = parse(html, {
     lowerCaseTagName: true,
     comment: false,
-    // pre:false -> parse code blocks as DOM so markup inside does not leak as text.
-    blockTextElements: { script: false, noscript: false, style: false, pre: false },
+    // script/style/noscript content is dropped; <pre> stays raw text (tags stripped at render).
+    blockTextElements: { script: false, noscript: false, style: false, pre: true },
   });
 
   const title = (root.querySelector("title")?.text ?? "").trim();
@@ -457,27 +484,36 @@ export async function fetchAndExtract(
   const fetchFn = deps.fetchFn ?? fetch;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = deps.maxHtmlBytes ?? DEFAULT_MAX_HTML_BYTES;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let res: Response;
-  try {
-    res = await fetchFn(parsed, {
-      method: "GET",
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": deps.userAgent ?? USER_AGENT,
-      },
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new ExtractError(`Fetching ${url} timed out after ${timeoutMs}ms.`);
+  // localhost may resolve to ::1 while the target listens on IPv4: retry once.
+  const targets = [parsed, ipv4Fallback(parsed)].filter((u): u is URL => u !== null);
+  let res: Response | null = null;
+  let lastNetworkError: unknown = null;
+  for (const target of targets) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      res = await fetchFn(target, {
+        method: "GET",
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "User-Agent": deps.userAgent ?? USER_AGENT,
+        },
+        signal: controller.signal,
+      });
+      break;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new ExtractError(`Fetching ${url} timed out after ${timeoutMs}ms.`);
+      }
+      lastNetworkError = err;
+    } finally {
+      clearTimeout(timer);
     }
-    const message = err instanceof Error ? err.message : String(err);
+  }
+  if (!res) {
+    const message = lastNetworkError instanceof Error ? lastNetworkError.message : String(lastNetworkError);
     throw new ExtractError(`Could not fetch ${url}: ${message}`);
-  } finally {
-    clearTimeout(timer);
   }
 
   if (!res.ok) {
