@@ -19992,7 +19992,7 @@ function parseArgs(argv) {
       }
       result.baseUrl = value;
     } else {
-      throw new ConfigError(`Unknown argument: ${arg}. Run with --help for usage.`);
+      throw new ConfigError(`Unknown argument: ${arg}`);
     }
   }
   return result;
