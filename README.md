@@ -247,13 +247,27 @@ test/               # bun:test suites
 
 ## Publishing to npm
 
-The package is npm-ready (`bin`, `files`, `prepublishOnly` runs typecheck + tests + build):
+> **Note:** the unscoped name `searxng-mcp` is already taken on npm by an unrelated project
+> (maintained by someone else), so this package uses the scoped name
+> **`@stifleur390/searxng-mcp`**. Nothing changes for GitHub installs, and the CLI binary stays
+> `searxng-mcp`.
+
+The package is npm-ready (scoped `name`, `bin`, `files`, `prepublishOnly` runs typecheck +
+tests + build):
 
 ```bash
-npm publish --access public
+npm login                       # authenticate as the npm user owning the scope
+npm publish --access public    # publishes @stifleur390/searxng-mcp
 ```
 
-Then users can `npm install -g searxng-mcp` / `npx searxng-mcp` without the GitHub prefix.
+> If your npm username differs from `stifleur390`, adjust the scope in `package.json` first.
+
+Then users can install globally without the GitHub prefix:
+
+```bash
+npm install -g @stifleur390/searxng-mcp
+npx @stifleur390/searxng-mcp --url http://localhost:8888
+```
 
 ## License
 

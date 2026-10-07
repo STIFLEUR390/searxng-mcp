@@ -296,6 +296,9 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 - `dist/` is **committed** so installs from GitHub (`bun install -g github:...`,
   `npm install -g github:...`, `npx github:...`) work without a build step.
 - `files`: `dist`, `README.md`, `SPEC.md`, `LICENSE`.
+- npm name: scoped **`@stifleur390/searxng-mcp`** — the unscoped `searxng-mcp` is already
+  registered on npm by an unrelated maintainer, so a scoped name is required to publish. The
+  CLI binary and MCP server name remain `searxng-mcp`.
 - `prepublishOnly`: `typecheck && test && build` — npm publication is always verified.
 - `engines.node: >=18` (global `fetch`).
 

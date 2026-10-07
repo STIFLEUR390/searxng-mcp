@@ -1,5 +1,5 @@
 {
-  "name": "searxng-mcp",
+  "name": "@stifleur390/searxng-mcp",
   "version": "1.0.0",
   "description": "MCP server for SearXNG: privacy-friendly web, news, image and video search for AI agents, with page content extraction and filtering",
   "type": "module",
