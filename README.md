@@ -6,6 +6,7 @@ page content extraction with structural filtering** (no headers, footers, navbar
 unless the agent asks for them).
 
 [![MCP](https://img.shields.io/badge/MCP-server-blue)](https://modelcontextprotocol.io)
+[![npm version](https://img.shields.io/npm/v/@aplix39/searxng-mcp?label=npm)](https://www.npmjs.com/package/@aplix39/searxng-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node%20%3E%3D18-black)](#installation)
 
@@ -57,14 +58,33 @@ curl 'http://localhost:8888/search?q=test&format=json' | head -c 200
 
 ## Installation
 
-### Bun (global)
+### npm (global)
 
 ```bash
-bun install -g github:STIFLEUR390/searxng-mcp
+npm install -g @aplix39/searxng-mcp
 searxng-mcp --url http://localhost:8888
 ```
 
-### npm (global)
+### npx (zero install, run on demand)
+
+```bash
+npx --yes @aplix39/searxng-mcp --url http://localhost:8888
+```
+
+### Bun (global)
+
+```bash
+bun install -g @aplix39/searxng-mcp
+searxng-mcp --url http://localhost:8888
+```
+
+Or straight from GitHub (the `dist/` bundle is committed, no build step needed):
+
+```bash
+bun install -g github:STIFLEUR390/searxng-mcp
+```
+
+### From GitHub with npm
 
 npm does not reliably link global binaries from git dependencies (npm 10 keeps the package as
 a symlink to an ephemeral cache clone), so pack the repo first, then install the tarball:
@@ -72,16 +92,6 @@ a symlink to an ephemeral cache clone), so pack the repo first, then install the
 ```bash
 npm pack github:STIFLEUR390/searxng-mcp
 npm install -g ./aplix39-searxng-mcp-*.tgz
-searxng-mcp --url http://localhost:8888
-```
-
-Once the package is published to the registry (see [Publishing to npm](#publishing-to-npm)),
-plain `npm install -g @aplix39/searxng-mcp` works too.
-
-### npx (zero install, run on demand)
-
-```bash
-npx --yes github:STIFLEUR390/searxng-mcp --url http://localhost:8888
 ```
 
 ### From source
@@ -94,9 +104,8 @@ bun run build       # produces the self-contained dist/index.js
 node dist/index.js --url http://localhost:8888
 ```
 
-> The `dist/` bundle is committed to the repo so the install flows above work straight from
-> GitHub without a build step. All three flows (bun global, npm pack+install, npx) are
-> validated against the released commit.
+> All install flows (npm registry, npx, bun registry, bun GitHub, npm pack+tgz, source) are
+> validated against the published **v1.0.0** release, including a Node 18 runtime check.
 
 ## Configuration
 
@@ -119,7 +128,7 @@ CLI flags: `--help`, `--version`.
 ### Claude Code
 
 ```bash
-claude mcp add searxng --env SEARXNG_URL=http://localhost:8888 -- npx --yes github:STIFLEUR390/searxng-mcp
+claude mcp add searxng --env SEARXNG_URL=http://localhost:8888 -- npx --yes @aplix39/searxng-mcp
 ```
 
 ### Claude Desktop / Cursor / generic MCP client
@@ -129,7 +138,7 @@ claude mcp add searxng --env SEARXNG_URL=http://localhost:8888 -- npx --yes gith
   "mcpServers": {
     "searxng": {
       "command": "npx",
-      "args": ["--yes", "github:STIFLEUR390/searxng-mcp"],
+      "args": ["--yes", "@aplix39/searxng-mcp"],
       "env": { "SEARXNG_URL": "http://localhost:8888" }
     }
   }
@@ -259,27 +268,20 @@ test/               # bun:test suites
 
 ## Publishing to npm
 
-> **Note:** the unscoped name `searxng-mcp` is already taken on npm by an unrelated project
-> (maintained by someone else), so this package uses the scoped name
-> **`@aplix39/searxng-mcp`** (scope = the maintainer's npm username). Nothing changes for
-> GitHub installs, and the CLI binary stays `searxng-mcp`.
+> **Note:** the unscoped name `searxng-mcp` is already taken on npm by an unrelated project,
+> so this package uses the scoped name **`@aplix39/searxng-mcp`** (scope = the maintainer's
+> npm username). Nothing changes for GitHub installs, and the CLI binary stays `searxng-mcp`.
 
-The package is npm-ready (scoped `name`, `bin`, `files`, `prepublishOnly` runs typecheck +
-tests + build):
+The package is **published**: [npmjs.com/package/@aplix39/searxng-mcp](https://www.npmjs.com/package/@aplix39/searxng-mcp)
+(v1.0.0, public, MIT). `prepublishOnly` runs typecheck + 84 tests + build on every publish,
+and the published tarball is byte-identical to the committed `dist/` bundle.
+
+Future releases:
 
 ```bash
 npm login                       # authenticate as the npm user owning the scope
-npm publish --access public    # publishes @aplix39/searxng-mcp
-```
-
-> The scope matches the maintainer's npm username (`aplix39`); adjust it in `package.json` if
-> publishing from another account.
-
-Then users can install globally without the GitHub prefix:
-
-```bash
-npm install -g @aplix39/searxng-mcp
-npx @aplix39/searxng-mcp --url http://localhost:8888
+npm publish --access public    # the account has 2FA: pass --otp=<code>, or use an
+                                # Automation token (npmjs.com → settings → access tokens)
 ```
 
 ## License
