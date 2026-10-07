@@ -1,0 +1,159 @@
+import { describe, expect, test } from "bun:test";
+
+import { SearXNGClient, SearXNGError } from "../src/client.ts";
+
+interface MockCall {
+  url: string;
+  accept?: string | null;
+}
+
+function mockFetch(
+  responder: (url: URL) => { status?: number; body?: unknown; rawBody?: string },
+): { fetchFn: typeof fetch; calls: MockCall[] } {
+  const calls: MockCall[] = [];
+  const fetchFn = (async (input: URL | string | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    calls.push({ url: url.toString(), accept: headers["Accept"] ?? null });
+    const { status = 200, body, rawBody } = responder(url);
+    const payload = rawBody ?? JSON.stringify(body ?? {});
+    return new Response(payload, {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  return { fetchFn, calls };
+}
+
+const sampleResults = {
+  query: "test",
+  results: [
+    {
+      url: "https://en.wikipedia.org/wiki/Test",
+      title: "Test",
+      content: "Topics referred to by the same term",
+      engine: "wikipedia",
+      category: "general",
+      engines: ["wikipedia"],
+      publishedDate: null,
+    },
+  ],
+};
+
+describe("SearXNGClient.search", () => {
+  test("builds the expected query string", async () => {
+    const { fetchFn, calls } = mockFetch(() => ({ body: sampleResults }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+
+    await client.search({
+      q: "searxng mcp",
+      categories: ["news", "videos"],
+      language: "fr",
+      pageno: 2,
+      timeRange: "week" as never,
+      safesearch: 2,
+      engines: ["duckduckgo", "brave"],
+    });
+
+    // time_range only accepts day|month|year; week is filtered out by us? No: passed through.
+    const url = new URL(calls[0]!.url);
+    expect(url.origin + url.pathname).toBe("http://localhost:8888/search");
+    expect(url.searchParams.get("q")).toBe("searxng mcp");
+    expect(url.searchParams.get("format")).toBe("json");
+    expect(url.searchParams.get("categories")).toBe("news,videos");
+    expect(url.searchParams.get("language")).toBe("fr");
+    expect(url.searchParams.get("pageno")).toBe("2");
+    expect(url.searchParams.get("safesearch")).toBe("2");
+    expect(url.searchParams.get("engines")).toBe("duckduckgo,brave");
+    expect(calls[0]!.accept).toBe("application/json");
+  });
+
+  test("omits default parameters", async () => {
+    const { fetchFn, calls } = mockFetch(() => ({ body: sampleResults }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await client.search({ q: "hello" });
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get("pageno")).toBeNull();
+    expect(url.searchParams.get("categories")).toBeNull();
+    expect(url.searchParams.get("time_range")).toBeNull();
+    expect(url.searchParams.get("safesearch")).toBeNull();
+  });
+
+  test("rejects empty query", async () => {
+    const client = new SearXNGClient({ baseUrl: "http://x", fetchFn: mockFetch(() => ({})).fetchFn });
+    await expect(client.search({ q: "  " })).rejects.toThrow(SearXNGError);
+  });
+
+  test("rejects responses without a results array", async () => {
+    const { fetchFn } = mockFetch(() => ({ body: { query: "x" } }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await expect(client.search({ q: "x" })).rejects.toThrow(/missing "results" array/);
+  });
+
+  test("403 explains how to enable JSON format", async () => {
+    const { fetchFn } = mockFetch(() => ({ status: 403, rawBody: "forbidden" }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await expect(client.search({ q: "x" })).rejects.toThrow(/formats: \[html, json\]/);
+  });
+
+  test("429 explains the rate limiter", async () => {
+    const { fetchFn } = mockFetch(() => ({ status: 429, rawBody: "slow down" }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await expect(client.search({ q: "x" })).rejects.toThrow(/limiter/);
+  });
+
+  test("network errors mention the base URL", async () => {
+    const fetchFn = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await expect(client.search({ q: "x" })).rejects.toThrow(/Could not reach SearXNG at http:\/\/localhost:8888/);
+  });
+
+  test("invalid JSON body is reported", async () => {
+    const { fetchFn } = mockFetch(() => ({ rawBody: "<html>oops</html>" }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await expect(client.search({ q: "x" })).rejects.toThrow(/invalid JSON/);
+  });
+
+  test("normalizes trailing slashes in the base URL", async () => {
+    const { fetchFn, calls } = mockFetch(() => ({ body: sampleResults }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888///", fetchFn });
+    await client.search({ q: "x" });
+    expect(calls[0]!.url.startsWith("http://localhost:8888/search?")).toBe(true);
+  });
+});
+
+describe("SearXNGClient.autocomplete", () => {
+  test("parses the SearXNG tuple format", async () => {
+    const { fetchFn } = mockFetch(() => ({
+      body: ["sear", ["searxng", "search engine"], [], [], {}],
+    }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    expect(await client.autocomplete("sear")).toEqual(["searxng", "search engine"]);
+  });
+
+  test("parses a flat string array", async () => {
+    const { fetchFn } = mockFetch(() => ({ body: ["alpha", "beta"] }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    expect(await client.autocomplete("a")).toEqual(["alpha", "beta"]);
+  });
+
+  test("returns empty list for unexpected shapes", async () => {
+    const { fetchFn } = mockFetch(() => ({ body: { not: "an array" } }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    expect(await client.autocomplete("a")).toEqual([]);
+  });
+});
+
+describe("SearXNGClient.config", () => {
+  test("returns the instance config", async () => {
+    const { fetchFn, calls } = mockFetch(() => ({
+      body: { categories: ["general", "news"], engines: [], autocomplete: "duckduckgo" },
+    }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    const config = await client.config();
+    expect(config.categories).toEqual(["general", "news"]);
+    expect(calls[0]!.url).toBe("http://localhost:8888/config");
+  });
+});

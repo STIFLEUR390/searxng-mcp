@@ -1,8 +1,48 @@
 {
   "name": "searxng-mcp",
-  "module": "index.ts",
+  "version": "1.0.0",
+  "description": "MCP server for SearXNG: privacy-friendly web, news, image and video search for AI agents, with page content extraction and filtering",
   "type": "module",
-  "private": true,
+  "module": "index.ts",
+  "bin": {
+    "searxng-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "bun run index.ts",
+    "build": "bun build ./index.ts --target=node --outdir=dist && chmod +x dist/index.js",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun test && bun run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/STIFLEUR390/searxng-mcp.git"
+  },
+  "homepage": "https://github.com/STIFLEUR390/searxng-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/STIFLEUR390/searxng-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "searxng",
+    "search",
+    "metasearch",
+    "ai-agents",
+    "claude",
+    "privacy"
+  ],
+  "author": "STIFLEUR390",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^26.6.4"
@@ -11,6 +51,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "node-html-parser": "^6.1.0",
+    "zod": "^4.6.5"
   }
 }
