@@ -312,14 +312,14 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 ## 10. Testing strategy
 
-Runner: `bun:test`. Suites (81 tests):
+Runner: `bun:test`. Suites (84 tests):
 
 | Suite | Coverage |
 |-------|----------|
 | `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default |
 | `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, autocompleter tuple parsing, IPv4 fallback behavior |
 | `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers/infoboxes/corrections/suggestions/unresponsive engines, config grouping |
-| `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion, content-root detection, link/image modes, selector success/failure, truncation, fetch guards (URL/protocol/HTTP/content-type/size) |
+| `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), truncation, fetch guards (URL/protocol/HTTP/content-type/size) |
 | `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding, domain filtering, category pinning, error propagation (`isError`), config/autocomplete/extract tools |
 
 All HTTP I/O is injectable (`FetchFn`), so tests are hermetic; a manual smoke test against a

@@ -239,7 +239,7 @@ It needs the footer legal notice too:
 ```bash
 bun install          # install dependencies
 bun run dev          # run the server from source (TypeScript)
-bun test             # 81 unit + integration tests (bun:test)
+bun test             # 84 unit + integration tests (bun:test)
 bunx tsc --noEmit    # strict typecheck
 bun run build        # bundle to dist/index.js (node target)
 ```
