@@ -293,8 +293,12 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
   `--target=node` so Node >= 18 runs it; `bun dist/index.js` also works).
 - Build: `bun build ./index.ts --target=node --outdir=dist` — single self-contained file
   (SDK + zod + node-html-parser bundled).
-- `dist/` is **committed** so installs from GitHub (`bun install -g github:...`,
-  `npm install -g github:...`, `npx github:...`) work without a build step.
+- `dist/` is **committed** so installs from GitHub work without a build step. Validated flows:
+  `bun install -g github:...` (binary on PATH, MCP handshake OK),
+  `npm pack github:... && npm install -g <tgz>` (direct `npm install -g github:...` is broken
+  on npm 10 — the global tree keeps a symlink to an ephemeral cache clone),
+  `npx --yes github:...`. The packed tarball itself (registry artifact) is fully validated:
+  `npm publish --dry-run` + install from the tgz both pass.
 - `files`: `dist`, `README.md`, `SPEC.md`, `LICENSE`.
 - npm name: scoped **`@stifleur390/searxng-mcp`** — the unscoped `searxng-mcp` is already
   registered on npm by an unrelated maintainer, so a scoped name is required to publish. The

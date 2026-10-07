@@ -66,10 +66,17 @@ searxng-mcp --url http://localhost:8888
 
 ### npm (global)
 
+npm does not reliably link global binaries from git dependencies (npm 10 keeps the package as
+a symlink to an ephemeral cache clone), so pack the repo first, then install the tarball:
+
 ```bash
-npm install -g github:STIFLEUR390/searxng-mcp
+npm pack github:STIFLEUR390/searxng-mcp
+npm install -g ./stifleur390-searxng-mcp-*.tgz
 searxng-mcp --url http://localhost:8888
 ```
+
+Once the package is published to the registry (see [Publishing to npm](#publishing-to-npm)),
+plain `npm install -g @stifleur390/searxng-mcp` works too.
 
 ### npx (zero install, run on demand)
 
@@ -87,8 +94,9 @@ bun run build       # produces the self-contained dist/index.js
 node dist/index.js --url http://localhost:8888
 ```
 
-> The `dist/` bundle is committed to the repo so `bun install -g` / `npm install -g` /
-> `npx` work straight from GitHub without a build step.
+> The `dist/` bundle is committed to the repo so the install flows above work straight from
+> GitHub without a build step. All three flows (bun global, npm pack+install, npx) are
+> validated against the released commit.
 
 ## Configuration
 
