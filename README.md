@@ -195,6 +195,10 @@ Always removed regardless of options: `script`, `style`, `noscript`, `iframe`, f
 banners (cookies, consent, popups, ads, newsletter boxes). The response reports which sections
 were removed so the agent can re-include them on the next call.
 
+Sections kept via `include_*` that live outside the main content area (nav/header/footer usually
+sit outside `<main>`) are appended to the output, so the opt-in is honored with the default
+`content_only` too. With `selector`, extraction stays exact (nothing is appended).
+
 Example: the agent found a page but only wants the article body:
 
 ```json

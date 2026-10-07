@@ -36327,7 +36327,7 @@ function renderNode(node, opts) {
   if (upper === "PRE") {
     return `
 \`\`\`
-${stripTags(el.textContent ?? "").trim()}
+${stripTags(el.rawText).trim()}
 \`\`\`
 `;
   }
@@ -36388,6 +36388,37 @@ function findContentRoot(root) {
     return best;
   return body;
 }
+function isWithin(el, ancestor) {
+  let cur = el;
+  while (cur) {
+    if (cur === ancestor)
+      return true;
+    cur = cur.parentNode;
+  }
+  return false;
+}
+function renderKeptOutsideScope(root, scope, opts) {
+  const wanted = Object.keys(SECTION_OPTIONS).filter((s) => opts[SECTION_OPTIONS[s]] === true);
+  if (wanted.length === 0)
+    return "";
+  const candidates = root.querySelectorAll("header, footer, nav, aside, div, section, ul, ol, form, span, [role]");
+  const appended = [];
+  const parts = [];
+  for (const el of candidates) {
+    const section = classify(el);
+    if (!section || !wanted.includes(section))
+      continue;
+    if (isWithin(el, scope) || isWithin(scope, el))
+      continue;
+    if (appended.some((a) => isWithin(el, a)))
+      continue;
+    appended.push(el);
+    parts.push(renderNode(el, opts));
+  }
+  return normalizeText(parts.join(`
+
+`));
+}
 function extractFromHtml(html, url, opts = {}) {
   const root = import_node_html_parser.parse(html, {
     lowerCaseTagName: true,
@@ -36411,12 +36442,19 @@ function extractFromHtml(html, url, opts = {}) {
 `));
     return finish(url, title, description, lang, content, removed, opts);
   }
+  let content;
   if (opts.contentOnly !== false) {
     scope = findContentRoot(root);
+    content = normalizeText(renderNode(scope, opts));
+    const kept = renderKeptOutsideScope(root, scope, opts);
+    if (kept)
+      content = `${content}
+
+${kept}`;
   } else {
     scope = root.querySelector("body") ?? root;
+    content = normalizeText(renderNode(scope, opts));
   }
-  const content = normalizeText(renderNode(scope, opts));
   return finish(url, title, description, lang, content, removed, opts);
 }
 function finish(url, title, description, lang, content, removed, opts) {

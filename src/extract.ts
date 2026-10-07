@@ -340,8 +340,10 @@ function renderNode(node: Node, opts: ExtractOptions): string {
   if (upper === "HR") return "\n---\n";
 
   if (upper === "PRE") {
-    // node-html-parser keeps <pre> content as raw text (markup included): strip tags.
-    return `\n\`\`\`\n${stripTags(el.textContent ?? "").trim()}\n\`\`\`\n`;
+    // node-html-parser keeps <pre> as a single raw text node: strip real tags
+    // first, then decode entities. textContent is already entity-decoded, so
+    // using it would destroy entity-encoded text such as &lt;div&gt;.
+    return `\n\`\`\`\n${stripTags(el.rawText).trim()}\n\`\`\`\n`;
   }
 
   const inner = renderChildren(el, opts);
@@ -392,6 +394,40 @@ function findContentRoot(root: HTMLElement): HTMLElement {
   return body;
 }
 
+/** Whether `el` is `ancestor` or lives inside it (node-html-parser has no contains()). */
+function isWithin(el: HTMLElement, ancestor: HTMLElement): boolean {
+  let cur: HTMLElement | undefined = el;
+  while (cur) {
+    if (cur === ancestor) return true;
+    cur = cur.parentNode as HTMLElement | undefined;
+  }
+  return false;
+}
+
+/**
+ * Sections kept via include_* that sit outside the extraction scope (typical:
+ * nav/header/footer live outside <main>) are rendered and appended, so the
+ * opt-in is honored even with the default content_only scope.
+ */
+function renderKeptOutsideScope(root: HTMLElement, scope: HTMLElement, opts: ExtractOptions): string {
+  const wanted = (Object.keys(SECTION_OPTIONS) as Section[]).filter((s) => opts[SECTION_OPTIONS[s]] === true);
+  if (wanted.length === 0) return "";
+  const candidates = root.querySelectorAll("header, footer, nav, aside, div, section, ul, ol, form, span, [role]");
+  const appended: HTMLElement[] = [];
+  const parts: string[] = [];
+  for (const el of candidates) {
+    const section = classify(el);
+    if (!section || !wanted.includes(section)) continue;
+    // Skip sections inside the scope (already rendered) and ancestors of it
+    // (would duplicate the scope content).
+    if (isWithin(el, scope) || isWithin(scope, el)) continue;
+    if (appended.some((a) => isWithin(el, a))) continue;
+    appended.push(el);
+    parts.push(renderNode(el, opts));
+  }
+  return normalizeText(parts.join("\n\n"));
+}
+
 /**
  * Pure extraction from an HTML string. Fetch separately with fetchAndExtract.
  */
@@ -427,12 +463,16 @@ export function extractFromHtml(html: string, url: string, opts: ExtractOptions 
     return finish(url, title, description, lang, content, removed, opts);
   }
 
+  let content: string;
   if (opts.contentOnly !== false) {
     scope = findContentRoot(root);
+    content = normalizeText(renderNode(scope, opts));
+    const kept = renderKeptOutsideScope(root, scope, opts);
+    if (kept) content = `${content}\n\n${kept}`;
   } else {
     scope = root.querySelector("body") ?? root;
+    content = normalizeText(renderNode(scope, opts));
   }
-  const content = normalizeText(renderNode(scope, opts));
   return finish(url, title, description, lang, content, removed, opts);
 }
 

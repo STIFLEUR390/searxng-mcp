@@ -249,13 +249,17 @@ Token classification applies to layout-ish tags only (`div`, `section`, `ul`, `o
 ### 7.2 Content root detection
 
 With `content_only` (default), the element among `article`, `main`, `[role=main]` with the most
-text (≥ 200 chars) becomes the extraction scope; otherwise the cleaned `<body>`, else the root.
+text (more than 200 chars) becomes the extraction scope; otherwise the cleaned `<body>`, else the root.
+Sections kept via `include_*` that sit outside the extraction scope (typical: `nav`, `header`,
+`footer` outside `<main>`) are rendered and appended after the scope content, so the opt-in is
+honored even with the default scope. `selector` mode never appends (exact extraction).
 
 ### 7.3 Rendering rules
 
 - block tags (`p`, `div`, `h1–h6`, `li`, `blockquote`, `pre`, `table` rows, ...) become
   newlines; headings become `#`/`##`; list items become `- `; `br` → newline, `hr` → `---`;
-- `<pre>` content is tag-stripped and entity-decoded, then wrapped in ``` fences;
+- `<pre>` raw text has real tags stripped and entities decoded (entity-encoded text such as
+  `&lt;div&gt;` is preserved as visible text), then wrapped in ``` fences;
 - links: text only by default, `[text](href)` when `include_links` (skipping `javascript:`
   and fragment-only hrefs);
 - images: dropped by default, `![alt](src)` when `include_images`;

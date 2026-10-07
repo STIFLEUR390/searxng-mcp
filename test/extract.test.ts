@@ -136,6 +136,41 @@ describe("extractFromHtml", () => {
       expect(err).toBeInstanceOf(ExtractError);
     }
   });
+
+  test("pre preserves entity-encoded text and strips real tags", () => {
+    const html = `<html><body><article><pre>&lt;div class="x"&gt;visible&lt;/div&gt; and <b>real</b> tags</pre></article></body></html>`;
+    const result = extractFromHtml(html, "https://x.org/");
+    expect(result.content).toContain('<div class="x">visible</div>');
+    expect(result.content).not.toContain("&lt;div");
+    expect(result.content).not.toContain("<b>");
+  });
+
+  test("include options apply to sections outside the content scope", () => {
+    const result = extractFromHtml(PAGE, "https://mysite.org/article", {
+      includeHeader: true,
+      includeNavigation: true,
+      includeSidebar: true,
+      includeFooter: true,
+      includeComments: true,
+    });
+    // default contentOnly still scopes the article first
+    expect(result.content).toContain("First paragraph of the real content.");
+    // kept sections living outside <main> are appended, not lost
+    expect(result.content).toContain("MySite Logo");
+    expect(result.content).toContain("Menu A");
+    expect(result.content).toContain("Related 1");
+    expect(result.content).toContain("Copyright 2026");
+    expect(result.content).toContain("Nice article!");
+  });
+
+  test("selector mode does not append kept sections outside the matches", () => {
+    const result = extractFromHtml(PAGE, "https://mysite.org/article", {
+      selector: "article",
+      includeNavigation: true,
+    });
+    expect(result.content).toContain("First paragraph");
+    expect(result.content).not.toContain("Menu A");
+  });
 });
 
 describe("fetchAndExtract", () => {
