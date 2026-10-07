@@ -71,12 +71,12 @@ a symlink to an ephemeral cache clone), so pack the repo first, then install the
 
 ```bash
 npm pack github:STIFLEUR390/searxng-mcp
-npm install -g ./stifleur390-searxng-mcp-*.tgz
+npm install -g ./aplix39-searxng-mcp-*.tgz
 searxng-mcp --url http://localhost:8888
 ```
 
 Once the package is published to the registry (see [Publishing to npm](#publishing-to-npm)),
-plain `npm install -g @stifleur390/searxng-mcp` works too.
+plain `npm install -g @aplix39/searxng-mcp` works too.
 
 ### npx (zero install, run on demand)
 
@@ -261,24 +261,25 @@ test/               # bun:test suites
 
 > **Note:** the unscoped name `searxng-mcp` is already taken on npm by an unrelated project
 > (maintained by someone else), so this package uses the scoped name
-> **`@stifleur390/searxng-mcp`**. Nothing changes for GitHub installs, and the CLI binary stays
-> `searxng-mcp`.
+> **`@aplix39/searxng-mcp`** (scope = the maintainer's npm username). Nothing changes for
+> GitHub installs, and the CLI binary stays `searxng-mcp`.
 
 The package is npm-ready (scoped `name`, `bin`, `files`, `prepublishOnly` runs typecheck +
 tests + build):
 
 ```bash
 npm login                       # authenticate as the npm user owning the scope
-npm publish --access public    # publishes @stifleur390/searxng-mcp
+npm publish --access public    # publishes @aplix39/searxng-mcp
 ```
 
-> If your npm username differs from `stifleur390`, adjust the scope in `package.json` first.
+> The scope matches the maintainer's npm username (`aplix39`); adjust it in `package.json` if
+> publishing from another account.
 
 Then users can install globally without the GitHub prefix:
 
 ```bash
-npm install -g @stifleur390/searxng-mcp
-npx @stifleur390/searxng-mcp --url http://localhost:8888
+npm install -g @aplix39/searxng-mcp
+npx @aplix39/searxng-mcp --url http://localhost:8888
 ```
 
 ## License

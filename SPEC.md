@@ -304,9 +304,9 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
   `npx --yes github:...`. The packed tarball itself (registry artifact) is fully validated:
   `npm publish --dry-run` + install from the tgz both pass.
 - `files`: `dist`, `README.md`, `SPEC.md`, `LICENSE`.
-- npm name: scoped **`@stifleur390/searxng-mcp`** — the unscoped `searxng-mcp` is already
-  registered on npm by an unrelated maintainer, so a scoped name is required to publish. The
-  CLI binary and MCP server name remain `searxng-mcp`.
+- npm name: scoped **`@aplix39/searxng-mcp`** (scope = maintainer's npm username) — the
+  unscoped `searxng-mcp` is already registered on npm by an unrelated maintainer, so a scoped
+  name is required to publish. The CLI binary and MCP server name remain `searxng-mcp`.
 - `prepublishOnly`: `typecheck && test && build` — npm publication is always verified.
 - `engines.node: >=18` (global `fetch`).
 
