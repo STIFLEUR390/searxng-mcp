@@ -4,7 +4,7 @@ Complete specification of the `searxng-mcp` MCP server: goals, architecture, too
 extraction/filtering behavior, error handling, packaging and testing.
 
 - **Package**: `searxng-mcp`
-- **Version**: 1.0.0
+- **Version**: 1.0.4
 - **Runtime**: Bun (development) / Node.js >= 18 (distribution target)
 - **Protocol**: MCP over stdio (`@modelcontextprotocol/sdk` ^1.32)
 - **License**: MIT
