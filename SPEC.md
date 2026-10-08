@@ -145,7 +145,9 @@ General-purpose search over any instance category. Output (markdown-ish text):
 # Search results ("query"[, <kind>])
 <n> of <m> results[ (filtered from <total>)]
 
-## Answer            (when the instance returned answers)
+## Answer            (when the instance returned answers; engine extras may be plain
+                     strings or objects — e.g. DuckDuckGo `{ answer, url }` — and are
+                     normalized to text, with the source URL kept when present)
 ## Infoboxes         (title, content, attributes, links)
 ## Results
 1. <title>
@@ -331,7 +333,7 @@ Runner: `bun:test`. Suites (103 tests):
 |-------|----------|
 | `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default, `SEARXNG_TIMEOUT_MS` parsing (default/valid/out-of-range) |
 | `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, `time_range=week` + autocomplete `language` forwarding, autocompleter tuple parsing, IPv4 fallback behavior |
-| `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers/infoboxes/corrections/suggestions/unresponsive engines, config grouping + compact `includeEngines: false` mode |
+| `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers (string AND object forms — no `[object Object]`)/infoboxes/corrections/suggestions/unresponsive engines, config grouping + compact `includeEngines: false` mode |
 | `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), `start_char` windowing, `headings_only` outline, truncation, fetch guards (URL/protocol/HTTP/content-type/size) incl. JSON/text fenced rendering and binary refusal |
 | `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding (incl. `time_range=week`), domain filtering, category pinning, error propagation (`isError`), config/autocomplete (`language`)/extract (`start_char`, `headings_only`) tools |
 | `test/version.test.ts` | `VERSION` ↔ `package.json` consistency (the published `--version` must equal the npm version; enforced by the `version` lifecycle script + this guard) |

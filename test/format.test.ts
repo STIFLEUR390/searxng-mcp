@@ -109,6 +109,38 @@ describe("formatSearchResponse", () => {
     expect(text).toContain("brave (too many requests)");
   });
 
+  test("renders object-form answers from current SearXNG without [object Object]", () => {
+    const text = formatSearchResponse(
+      makeResponse({
+        answers: [
+          {
+            answer: "SearXNG is a metasearch engine forked from the discontinued searX.",
+            url: "https://en.wikipedia.org/wiki/SearXNG",
+            engine: "duckduckgo",
+            template: "answer/legacy.html",
+          },
+        ],
+      }),
+    );
+    expect(text).not.toContain("[object Object]");
+    expect(text).toContain("SearXNG is a metasearch engine forked from the discontinued searX.");
+    expect(text).toContain("https://en.wikipedia.org/wiki/SearXNG");
+  });
+
+  test("object-form answers without a text field fall back to JSON, never [object Object]", () => {
+    const text = formatSearchResponse(makeResponse({ answers: [{ engine: "duckduckgo" }] }));
+    expect(text).not.toContain("[object Object]");
+    expect(text).toContain('"engine":"duckduckgo"');
+  });
+
+  test("object-form corrections render their correction text", () => {
+    const text = formatSearchResponse(
+      makeResponse({ corrections: [{ correction: "did you mean searxng", url: "https://example.org" }] }),
+    );
+    expect(text).not.toContain("[object Object]");
+    expect(text).toContain("- did you mean searxng");
+  });
+
   test("renders infoboxes", () => {
     const text = formatSearchResponse(
       makeResponse({

@@ -1,5 +1,23 @@
 /** Types mirroring the SearXNG JSON API (/search, /autocompleter, /config). */
 
+/**
+ * Instant answer. Older engines return a plain string; current SearXNG returns
+ * an object (e.g. the DuckDuckGo `answer/legacy.html` template) with the text
+ * under `answer` and an optional source `url`.
+ */
+export interface SearXNGAnswer {
+  answer?: string;
+  url?: string;
+  engine?: string;
+  template?: string;
+}
+
+/** Spelling correction: a plain string, or an object carrying a `correction` field. */
+export interface SearXNGCorrection {
+  correction?: string;
+  url?: string;
+}
+
 export interface SearXNGResult {
   url: string;
   title: string;
@@ -31,8 +49,8 @@ export interface SearXNGSearchResponse {
   query: string;
   number_of_results?: number;
   results: SearXNGResult[];
-  answers?: string[];
-  corrections?: string[];
+  answers?: Array<string | SearXNGAnswer>;
+  corrections?: Array<string | SearXNGCorrection>;
   infoboxes?: SearXNGInfobox[];
   suggestions?: string[];
   /** [engineName, reason] pairs for engines that failed during the search. */

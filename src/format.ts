@@ -75,6 +75,23 @@ function formatResult(result: SearXNGResult, index: number, kind: ResultKind): s
   return lines.join("\n");
 }
 
+/**
+ * Normalize engine-provided extras: SearXNG may return a plain string or an
+ * object (e.g. DuckDuckGo instant answers: `{ answer, url, template }`).
+ */
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    for (const key of ["answer", "correction", "suggestion"]) {
+      const field = obj[key];
+      if (typeof field === "string" && field) return field;
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 export function formatSearchResponse(
   resp: SearXNGSearchResponse,
   opts: SearchFormatOptions = {},
@@ -99,7 +116,11 @@ export function formatSearchResponse(
   if (resp.answers?.length) {
     parts.push("");
     parts.push("## Answer");
-    for (const answer of resp.answers) parts.push(answer);
+    for (const answer of resp.answers) {
+      parts.push(asText(answer));
+      const url = typeof answer === "object" && answer !== null ? answer.url : undefined;
+      if (typeof url === "string" && url) parts.push(`   ${url}`);
+    }
   }
 
   if (resp.infoboxes?.length) {
@@ -137,12 +158,12 @@ export function formatSearchResponse(
   if (resp.corrections?.length) {
     parts.push("");
     parts.push("## Corrections");
-    for (const c of resp.corrections) parts.push(`- ${c}`);
+    for (const c of resp.corrections) parts.push(`- ${asText(c)}`);
   }
   if (resp.suggestions?.length) {
     parts.push("");
     parts.push("## Related searches");
-    parts.push(resp.suggestions.map((s) => `- ${s}`).join("\n"));
+    parts.push(resp.suggestions.map((s) => `- ${asText(s)}`).join("\n"));
   }
   if (resp.unresponsive_engines?.length) {
     const details = resp.unresponsive_engines
