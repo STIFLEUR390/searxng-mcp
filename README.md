@@ -266,7 +266,7 @@ It needs the footer legal notice too:
 ```bash
 bun install          # install dependencies
 bun run dev          # run the server from source (TypeScript)
-bun test             # 103 unit + integration tests (bun:test)
+bun test             # 106 unit + integration tests (bun:test)
 bunx tsc --noEmit    # strict typecheck
 bun run build        # bundle to dist/index.js (node target)
 ```
@@ -291,10 +291,10 @@ test/               # bun:test suites
 > npm username). Nothing changes for GitHub installs, and the CLI binary stays `searxng-mcp`.
 
 The package is **published**: [npmjs.com/package/@aplix39/searxng-mcp](https://www.npmjs.com/package/@aplix39/searxng-mcp)
-(latest: **v1.0.3**, public, MIT). `prepublishOnly` runs typecheck + 103 tests + build on every
+(latest: **v1.0.4**, public, MIT). `prepublishOnly` runs typecheck + 106 tests + build on every
 publish; the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle,
-and the published v1.0.3 tarball was re-validated the same way (shasum match, `--version` reporting
-1.0.3, isolated `npm i` + MCP handshake). `npm version` now rebuilds `dist/` too, so the tag, the
+and the published v1.0.3/v1.0.4 tarballs were re-validated the same way (shasum match, `--version` reporting
+the published version, isolated `npm i` + MCP handshake). `npm version` now rebuilds `dist/` too, so the tag, the
 commit and the published bundle always carry the same version string.
 
 Future releases:

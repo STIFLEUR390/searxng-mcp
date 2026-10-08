@@ -327,7 +327,7 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 ## 10. Testing strategy
 
-Runner: `bun:test`. Suites (103 tests):
+Runner: `bun:test`. Suites (106 tests):
 
 | Suite | Coverage |
 |-------|----------|
