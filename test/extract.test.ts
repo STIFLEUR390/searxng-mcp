@@ -171,6 +171,36 @@ describe("extractFromHtml", () => {
     expect(result.content).toContain("First paragraph");
     expect(result.content).not.toContain("Menu A");
   });
+
+  test("start_char windows the extracted content", () => {
+    const full = extractFromHtml(PAGE, "https://mysite.org/article");
+    const idx = full.content.indexOf("Second paragraph");
+    expect(idx).toBeGreaterThan(0);
+    const windowed = extractFromHtml(PAGE, "https://mysite.org/article", { startChar: idx });
+    expect(windowed.content.startsWith("Second paragraph")).toBe(true);
+    expect(windowed.content).not.toContain("First paragraph of the real content.");
+    expect(windowed.startChar).toBe(idx);
+    expect(windowed.originalLength).toBe(full.originalLength);
+  });
+
+  test("start_char past the end yields an empty window, not an error", () => {
+    const result = extractFromHtml(PAGE, "https://mysite.org/article", { startChar: 10_000_000 });
+    expect(result.content).toBe("");
+    expect(result.startChar).toBe(result.originalLength);
+  });
+
+  test("headings_only returns the outline and skips removed chrome", () => {
+    const result = extractFromHtml(PAGE, "https://mysite.org/article", { headingsOnly: true });
+    expect(result.content).toContain("# My Article");
+    expect(result.content).not.toContain("Related");
+    expect(result.content).not.toContain("First paragraph");
+  });
+
+  test("headings_only reports no-headings pages gracefully", () => {
+    const html = "<html><body><article><p>Text only</p></article></body></html>";
+    const result = extractFromHtml(html, "https://x.org/", { headingsOnly: true });
+    expect(result.content).toBe("(no headings found)");
+  });
 });
 
 describe("fetchAndExtract", () => {
@@ -208,14 +238,46 @@ describe("fetchAndExtract", () => {
     ).rejects.toThrow(/HTTP 404/);
   });
 
-  test("refuses non-HTML content types", async () => {
+  test("pretty-prints JSON bodies in a fenced block", async () => {
+    const result = await fetchAndExtract(
+      "https://example.org/api",
+      {},
+      { fetchFn: mockFetch('{"a":1,"b":[2,3]}', { contentType: "application/json" }) },
+    );
+    expect(result.content).toContain('```json');
+    expect(result.content).toContain('"a": 1');
+    expect(result.content).toContain('```');
+    expect(result.removed).toEqual([]);
+  });
+
+  test("returns non-HTML text bodies as fenced text", async () => {
+    const result = await fetchAndExtract(
+      "https://example.org/notes.txt",
+      {},
+      { fetchFn: mockFetch("line one\nline two", { contentType: "text/plain; charset=utf-8" }) },
+    );
+    expect(result.content).toContain("```");
+    expect(result.content).toContain("line one");
+  });
+
+  test("invalid JSON bodies fall back to the raw fenced body", async () => {
+    const result = await fetchAndExtract(
+      "https://example.org/api",
+      {},
+      { fetchFn: mockFetch("not-json{{", { contentType: "application/json" }) },
+    );
+    expect(result.content).toContain("not-json{{");
+    expect(result.content).not.toContain("```json");
+  });
+
+  test("still refuses binary content types", async () => {
     await expect(
       fetchAndExtract(
-        "https://example.org/api",
+        "https://example.org/file.pdf",
         {},
-        { fetchFn: mockFetch('{"a":1}', { contentType: "application/json" }) },
+        { fetchFn: mockFetch("%PDF-1.7", { contentType: "application/pdf" }) },
       ),
-    ).rejects.toThrow(/content-type "application\/json" is not HTML/);
+    ).rejects.toThrow(/not supported/);
   });
 
   test("refuses oversized bodies", async () => {

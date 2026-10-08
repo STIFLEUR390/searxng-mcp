@@ -3,9 +3,12 @@ import { describe, expect, test } from "bun:test";
 import {
   ConfigError,
   DEFAULT_BASE_URL,
+  DEFAULT_TIMEOUT_MS,
+  ENV_TIMEOUT_MS,
   normalizeBaseUrl,
   parseArgs,
   resolveBaseUrl,
+  resolveTimeoutMs,
 } from "../src/config.ts";
 
 describe("normalizeBaseUrl", () => {
@@ -96,5 +99,26 @@ describe("resolveBaseUrl", () => {
   test("default used when nothing set", () => {
     expect(resolveBaseUrl([], {})).toBe(DEFAULT_BASE_URL);
     expect(DEFAULT_BASE_URL).toBe("http://localhost:8888");
+  });
+});
+
+describe("resolveTimeoutMs", () => {
+  test("defaults when unset or empty", () => {
+    expect(resolveTimeoutMs({})).toBe(DEFAULT_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "" })).toBe(DEFAULT_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "  " })).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  test("parses a valid integer", () => {
+    expect(resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "60000" })).toBe(60000);
+    expect(resolveTimeoutMs({ [ENV_TIMEOUT_MS]: " 500 " })).toBe(500);
+  });
+
+  test("rejects out-of-range and non-integer values", () => {
+    expect(() => resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "499" })).toThrow(ConfigError);
+    expect(() => resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "300001" })).toThrow(ConfigError);
+    expect(() => resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "abc" })).toThrow(ConfigError);
+    expect(() => resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "1.5" })).toThrow(ConfigError);
+    expect(() => resolveTimeoutMs({ [ENV_TIMEOUT_MS]: "-1000" })).toThrow(ConfigError);
   });
 });

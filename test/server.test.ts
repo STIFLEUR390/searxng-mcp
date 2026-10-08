@@ -159,6 +159,67 @@ describe("MCP server integration", () => {
     expect(text).toContain("- searxng");
   });
 
+  test("searxng_autocomplete forwards language", async () => {
+    let captured = "";
+    const mcp = await connect(async (input) => {
+      captured = String(input);
+      return jsonResponse(["bonj", ["bonjour"]]);
+    });
+    const text = textOf(
+      await mcp.callTool({ name: "searxng_autocomplete", arguments: { q: "bonj", language: "fr" } }),
+    );
+    expect(new URL(captured).searchParams.get("language")).toBe("fr");
+    expect(text).toContain("- bonjour");
+  });
+
+  test("searxng_search forwards time_range=week", async () => {
+    let captured = "";
+    const mcp = await connect(async (input) => {
+      captured = String(input);
+      return jsonResponse({ query: "x", results: [] });
+    });
+    await mcp.callTool({ name: "searxng_search", arguments: { q: "x", time_range: "week" } });
+    expect(new URL(captured).searchParams.get("time_range")).toBe("week");
+  });
+
+  test("searxng_config include_engines=false hides engine lists", async () => {
+    const mcp = await connect(async () =>
+      jsonResponse({
+        categories: ["general", "news"],
+        engines: [{ name: "Wikipedia", categories: ["general"], enabled: true }],
+        autocomplete: "duckduckgo",
+      }),
+    );
+    const text = textOf(
+      await mcp.callTool({ name: "searxng_config", arguments: { include_engines: false } }),
+    );
+    expect(text).toContain("Engines: 1 enabled of 1 total");
+    expect(text).not.toContain("Wikipedia");
+  });
+
+  test("searxng_extract_content headings_only returns the outline", async () => {
+    const mcp = await connect(async () => htmlResponse(pageHtml));
+    const text = textOf(
+      await mcp.callTool({
+        name: "searxng_extract_content",
+        arguments: { url: "https://example.org/doc", headings_only: true },
+      }),
+    );
+    expect(text).toContain("# Doc");
+    expect(text).not.toContain("Useful content here.");
+  });
+
+  test("searxng_extract_content start_char reports the window", async () => {
+    const mcp = await connect(async () => htmlResponse(pageHtml));
+    const text = textOf(
+      await mcp.callTool({
+        name: "searxng_extract_content",
+        arguments: { url: "https://example.org/doc", start_char: 5 },
+      }),
+    );
+    expect(text).toContain("Window: starting at character 5");
+  });
+
   test("searxng_extract_content filters chrome and reports removals", async () => {
     const mcp = await connect(async () => htmlResponse(pageHtml));
     const text = textOf(

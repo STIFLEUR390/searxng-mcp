@@ -19860,12 +19860,14 @@ class SearXNGClient {
     }
     return json;
   }
-  async autocomplete(q) {
+  async autocomplete(q, language) {
     if (!q.trim()) {
       throw new SearXNGError("Autocomplete query must not be empty.");
     }
     const url = new URL(`${this.baseUrl}/autocompleter`);
     url.searchParams.set("q", q);
+    if (language?.trim())
+      url.searchParams.set("language", language.trim());
     const json = await this.getJson(url);
     if (!Array.isArray(json))
       return [];
@@ -19945,6 +19947,10 @@ class SearXNGClient {
 // src/config.ts
 var ENV_URL = "SEARXNG_URL";
 var DEFAULT_BASE_URL = "http://localhost:8888";
+var ENV_TIMEOUT_MS = "SEARXNG_TIMEOUT_MS";
+var DEFAULT_TIMEOUT_MS2 = 30000;
+var MIN_TIMEOUT_MS = 500;
+var MAX_TIMEOUT_MS = 300000;
 
 class ConfigError extends Error {
   name = "ConfigError";
@@ -19965,9 +19971,13 @@ Configuration:
     2. ${ENV_URL} environment variable
     3. default: ${DEFAULT_BASE_URL}
 
+  ${ENV_TIMEOUT_MS} sets the per-request timeout in milliseconds
+  (default ${DEFAULT_TIMEOUT_MS2}, min ${MIN_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}).
+
 Examples:
   searxng-mcp --url http://localhost:8888
   SEARXNG_URL=https://searx.example.org searxng-mcp
+  ${ENV_TIMEOUT_MS}=60000 searxng-mcp
 
 The server communicates over stdio and is meant to be launched by an MCP
 client (Claude Desktop, Claude Code, Cursor, ...).`;
@@ -20023,6 +20033,16 @@ function resolveBaseUrl(argv, env = process.env) {
   const fromCli = parseArgs(argv).baseUrl;
   const raw = fromCli ?? env[ENV_URL] ?? DEFAULT_BASE_URL;
   return normalizeBaseUrl(raw);
+}
+function resolveTimeoutMs(env = process.env) {
+  const raw = env[ENV_TIMEOUT_MS];
+  if (raw === undefined || raw.trim() === "")
+    return DEFAULT_TIMEOUT_MS2;
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < MIN_TIMEOUT_MS || value > MAX_TIMEOUT_MS) {
+    throw new ConfigError(`Invalid ${ENV_TIMEOUT_MS}: "${raw}". Expected an integer between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}.`);
+  }
+  return value;
 }
 
 // node_modules/zod/v3/helpers/util.js
@@ -27561,8 +27581,9 @@ class ExtractError extends Error {
 }
 var DEFAULT_MAX_LENGTH = 20000;
 var MAX_LENGTH_CAP = 200000;
-var DEFAULT_TIMEOUT_MS2 = 30000;
+var DEFAULT_TIMEOUT_MS3 = 30000;
 var DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024;
+var MAX_HEADINGS = 200;
 var USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/searxng-mcp)";
 var ENTITY_MAP = {
   "&amp;": "&",
@@ -27918,6 +27939,19 @@ function extractFromHtml(html, url, opts = {}) {
   const lang = root.querySelector("html")?.getAttribute("lang")?.trim() || undefined;
   const removed = new Set;
   cleanDom(root, opts, removed);
+  if (opts.headingsOnly) {
+    const headings = [];
+    collectHeadings(root, headings);
+    const shown = headings.slice(0, MAX_HEADINGS);
+    let outline = shown.map((h) => `${"#".repeat(h.level)} ${h.text}`).join(`
+`);
+    if (headings.length > shown.length) {
+      outline += `
+
+[… ${headings.length - shown.length} more headings omitted]`;
+    }
+    return finish(url, title, description, lang, outline || "(no headings found)", removed, opts);
+  }
   let scope;
   if (opts.selector) {
     const matches = root.querySelectorAll(opts.selector);
@@ -27945,26 +27979,76 @@ ${kept}`;
   }
   return finish(url, title, description, lang, content, removed, opts);
 }
-function finish(url, title, description, lang, content, removed, opts) {
-  const maxLength = Math.min(opts.maxLength ?? DEFAULT_MAX_LENGTH, MAX_LENGTH_CAP);
-  const originalLength = content.length;
-  let truncated = false;
-  let finalContent = content;
-  if (content.length > maxLength) {
-    truncated = true;
-    finalContent = `${content.slice(0, maxLength).trimEnd()}
-
-[... truncated at ${maxLength} characters — raise max_length to get more]`;
+function collectHeadings(node, out) {
+  for (const child of node.childNodes) {
+    const el = child;
+    const tag = (el.tagName ?? "").toLowerCase();
+    if (/^h[1-6]$/.test(tag)) {
+      const text = normalizeText(el.text ?? "");
+      if (text)
+        out.push({ level: Number(tag.slice(1)), text });
+      continue;
+    }
+    if (el.childNodes?.length)
+      collectHeadings(el, out);
   }
+}
+function applyWindow(text, opts, inlineNotice) {
+  const maxLength = Math.min(opts.maxLength ?? DEFAULT_MAX_LENGTH, MAX_LENGTH_CAP);
+  const originalLength = text.length;
+  const startChar = Math.min(Math.max(Math.trunc(opts.startChar ?? 0), 0), originalLength);
+  const rest = text.slice(startChar);
+  if (rest.length > maxLength) {
+    return {
+      windowed: inlineNotice ? `${rest.slice(0, maxLength).trimEnd()}
+
+[... truncated at ${maxLength} characters — raise max_length to get more]` : rest.slice(0, maxLength).trimEnd(),
+      truncated: true,
+      startChar,
+      originalLength
+    };
+  }
+  return { windowed: rest, truncated: false, startChar, originalLength };
+}
+function finish(url, title, description, lang, content, removed, opts) {
+  const { windowed, truncated, startChar, originalLength } = applyWindow(content, opts, true);
   return {
     url,
     title,
     description,
     lang,
-    content: finalContent,
+    content: windowed,
     truncated,
     removed: [...removed].map((s) => SECTION_LABELS[s]),
-    originalLength
+    originalLength,
+    startChar
+  };
+}
+function renderPlainBody(body, url, opts, kind) {
+  let pretty = body;
+  if (kind === "json") {
+    try {
+      pretty = JSON.stringify(JSON.parse(body), null, 2);
+    } catch {}
+  }
+  const { windowed, truncated, startChar, originalLength } = applyWindow(pretty, opts, false);
+  const fenceLang = kind === "json" && pretty !== body ? "json" : "";
+  let content = "```" + fenceLang + `
+` + windowed + "\n```";
+  if (truncated) {
+    const end = startChar + windowed.length;
+    content += `
+
+[... truncated: showing characters ${startChar}–${end} of ${originalLength} — raise max_length to get more]`;
+  }
+  return {
+    url,
+    title: "",
+    content,
+    truncated,
+    removed: [],
+    originalLength,
+    startChar
   };
 }
 async function fetchAndExtract(url, opts = {}, deps = {}) {
@@ -27978,7 +28062,7 @@ async function fetchAndExtract(url, opts = {}, deps = {}) {
     throw new ExtractError(`Unsupported protocol "${parsed.protocol}" in ${url}. Only http(s) is supported.`);
   }
   const fetchFn = deps.fetchFn ?? fetch;
-  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS2;
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS3;
   const maxBytes = deps.maxHtmlBytes ?? DEFAULT_MAX_HTML_BYTES;
   const targets = [parsed, ipv4Fallback(parsed)].filter((u) => u !== null);
   let res = null;
@@ -27990,7 +28074,7 @@ async function fetchAndExtract(url, opts = {}, deps = {}) {
       res = await fetchFn(target, {
         method: "GET",
         headers: {
-          Accept: "text/html,application/xhtml+xml",
+          Accept: "text/html,application/xhtml+xml,application/json,text/plain,application/xml;q=0.9,text/*;q=0.8,*/*;q=0.5",
           "User-Agent": deps.userAgent ?? USER_AGENT
         },
         signal: controller.signal
@@ -28012,19 +28096,25 @@ async function fetchAndExtract(url, opts = {}, deps = {}) {
   if (!res.ok) {
     throw new ExtractError(`Fetching ${url} failed: HTTP ${res.status} ${res.statusText}. ` + `The page may block bots, require JavaScript, or be behind authentication.`);
   }
-  const contentType = res.headers.get("content-type") ?? "";
-  if (contentType && !/html|xml/i.test(contentType) && !/text\//i.test(contentType)) {
-    throw new ExtractError(`Refusing to extract from ${url}: content-type "${contentType}" is not HTML.`);
-  }
+  const contentType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
   const contentLength = Number(res.headers.get("content-length") ?? 0);
   if (contentLength > maxBytes) {
     throw new ExtractError(`Refusing to extract from ${url}: content-length ${contentLength} exceeds the ${maxBytes} byte limit.`);
   }
-  const html = await res.text();
-  if (html.length > maxBytes) {
+  const body = await res.text();
+  if (body.length > maxBytes) {
     throw new ExtractError(`Refusing to extract from ${url}: body is larger than the ${maxBytes} byte limit.`);
   }
-  return extractFromHtml(html, url, opts);
+  if (contentType.includes("json")) {
+    return renderPlainBody(body, url, opts, "json");
+  }
+  if (contentType && !/html|xml/.test(contentType)) {
+    if (contentType.startsWith("text/")) {
+      return renderPlainBody(body, url, opts, "text");
+    }
+    throw new ExtractError(`Refusing to extract from ${url}: content-type "${contentType}" is not supported. ` + `HTML, JSON and plain-text bodies are supported; binary files (PDF, images, archives) are not.`);
+  }
+  return extractFromHtml(body, url, opts);
 }
 
 // src/format.ts
@@ -28168,7 +28258,7 @@ function formatAutocomplete(q, suggestions) {
   return [`Suggestions for "${q}":`, ...suggestions.map((s) => `- ${s}`)].join(`
 `);
 }
-function formatConfig(config, baseUrl) {
+function formatConfig(config, baseUrl, opts = {}) {
   const parts = [];
   parts.push(`# SearXNG instance`);
   parts.push(`URL: ${baseUrl}`);
@@ -28190,6 +28280,9 @@ function formatConfig(config, baseUrl) {
   if (engines.length) {
     parts.push("");
     parts.push(`## Engines: ${enabled.length} enabled of ${engines.length} total`);
+    if (opts.includeEngines === false)
+      return parts.join(`
+`);
     const byCategory = new Map;
     for (const engine of enabled) {
       for (const category of engine.categories ?? ["uncategorized"]) {
@@ -28209,7 +28302,7 @@ function formatConfig(config, baseUrl) {
 }
 
 // src/version.ts
-var VERSION = "1.0.0";
+var VERSION = "1.0.1";
 
 // src/server.ts
 var SERVER_NAME = "searxng-mcp";
@@ -28236,7 +28329,7 @@ var coreSearchShape = {
   q: string2().min(1).describe("Search query. Supports search-engine syntax."),
   language: string2().optional().describe('Language code for results, e.g. "en", "fr", "de". Default: instance setting.'),
   pageno: number2().int().min(1).max(50).optional().describe("Page number of results to fetch (default 1). Use to paginate."),
-  time_range: _enum(["day", "month", "year"]).optional().describe("Restrict results to the last day, month or year (engines that support it)."),
+  time_range: _enum(["day", "week", "month", "year"]).optional().describe("Restrict results to the last day, week, month or year (engines that support it)."),
   safesearch: number2().int().min(0).max(2).optional().describe("SafeSearch level: 0=off, 1=moderate, 2=strict. Default: instance setting."),
   engines: array(string2().min(1)).optional().describe('Restrict to specific engines by name or shortcut, e.g. ["duckduckgo", "brave"].'),
   limit: number2().int().min(1).max(50).optional().describe("Max number of results to return in the output (default 10, max 50)."),
@@ -28301,12 +28394,13 @@ function createServer(client, options = {}) {
     title: "SearXNG autocomplete",
     description: "Get search query suggestions from the user's SearXNG instance. " + "Useful to refine or expand a query before searching.",
     inputSchema: {
-      q: string2().min(1).describe("Partial search query to get suggestions for.")
+      q: string2().min(1).describe("Partial search query to get suggestions for."),
+      language: string2().optional().describe('Language code for suggestions, e.g. "fr", "en". Default: instance setting.')
     },
     annotations: readOnly
   }, async (args) => {
     try {
-      const suggestions = await client.autocomplete(args.q);
+      const suggestions = await client.autocomplete(args.q, args.language);
       return ok(formatAutocomplete(args.q, suggestions));
     } catch (err) {
       return fail(err);
@@ -28315,12 +28409,14 @@ function createServer(client, options = {}) {
   server.registerTool("searxng_config", {
     title: "SearXNG instance configuration",
     description: "Describe the user's SearXNG instance: available categories and enabled engines grouped by category. " + "Call this first when you need to know what can be searched on this instance.",
-    inputSchema: {},
+    inputSchema: {
+      include_engines: boolean2().optional().describe("List enabled engines grouped by category (default: true). " + "Set false for a compact view with counts only (big instances list hundreds of engines).")
+    },
     annotations: readOnly
-  }, async () => {
+  }, async (args) => {
     try {
       const config = await client.config();
-      return ok(formatConfig(config, client.baseUrl));
+      return ok(formatConfig(config, client.baseUrl, { includeEngines: args.include_engines }));
     } catch (err) {
       return fail(err);
     }
@@ -28339,7 +28435,9 @@ function createServer(client, options = {}) {
       include_images: boolean2().optional().describe("Render images as markdown ![alt](src) (default: false)."),
       content_only: boolean2().optional().describe("Extract only the main content area (article/main) when detectable " + "(default: true). Set false to render the whole cleaned body."),
       selector: string2().optional().describe('Advanced: extract only elements matching this CSS selector, e.g. "article" or ".post-content". ' + "Overrides content_only."),
-      max_length: number2().int().min(500).max(200000).optional().describe("Truncate the extracted content to this many characters (default 20000).")
+      max_length: number2().int().min(500).max(200000).optional().describe("Truncate the extracted content to this many characters (default 20000)."),
+      start_char: number2().int().min(0).optional().describe("Start the output window at this character offset of the extracted content (default 0). " + "Combine with max_length to page through long pages."),
+      headings_only: boolean2().optional().describe("Return only the heading outline (h1–h6, indented by depth) instead of the full text. " + "Use to map a long page before extracting its sections.")
     },
     annotations: readOnly
   }, async (args) => {
@@ -28354,7 +28452,9 @@ function createServer(client, options = {}) {
         includeImages: args.include_images,
         contentOnly: args.content_only,
         selector: args.selector,
-        maxLength: args.max_length
+        maxLength: args.max_length,
+        startChar: args.start_char,
+        headingsOnly: args.headings_only
       }, { fetchFn: options.fetchFn });
       const parts = [];
       parts.push(`# ${result.title || "(no title)"}`);
@@ -28364,6 +28464,9 @@ function createServer(client, options = {}) {
       if (result.description)
         parts.push(`Description: ${result.description}`);
       parts.push(`Content: ${result.originalLength} chars extracted` + (result.truncated ? ` — truncated to ${result.content.length}` : ""));
+      if (result.startChar > 0) {
+        parts.push(`Window: starting at character ${result.startChar} of ${result.originalLength}`);
+      }
       if (result.removed.length) {
         parts.push(`Removed sections: ${result.removed.join(", ")} (use include_* options to keep them)`);
       }
@@ -28404,10 +28507,17 @@ async function main() {
     console.error(`searxng-mcp: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(2);
   }
-  const client = new SearXNGClient({ baseUrl });
+  let timeoutMs;
+  try {
+    timeoutMs = resolveTimeoutMs(process.env);
+  } catch (err) {
+    console.error(`searxng-mcp: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+  const client = new SearXNGClient({ baseUrl, timeoutMs });
   const server = createServer(client, { version: VERSION });
   const source = parsed.baseUrl ? "--url flag" : process.env[ENV_URL] ? `${ENV_URL} env var` : `default (${DEFAULT_BASE_URL})`;
-  console.error(`[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})`);
+  console.error(`[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})` + (timeoutMs !== DEFAULT_TIMEOUT_MS2 ? `, timeout ${timeoutMs}ms` : ""));
   const transport = new StdioServerTransport;
   await server.connect(transport);
   console.error("[searxng-mcp] ready — waiting for MCP requests on stdio");

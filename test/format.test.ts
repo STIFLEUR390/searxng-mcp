@@ -191,4 +191,19 @@ describe("formatConfig", () => {
     expect(text).toContain("### general (1)\nWikipedia");
     expect(text).not.toContain("Disabled Engine");
   });
+
+  test("includeEngines=false keeps counts but drops the engine lists", () => {
+    const text = formatConfig(
+      {
+        autocomplete: "duckduckgo",
+        categories: ["general"],
+        engines: [{ name: "Wikipedia", categories: ["general"], enabled: true }],
+      },
+      "http://localhost:8888",
+      { includeEngines: false },
+    );
+    expect(text).toContain("Engines: 1 enabled of 1 total");
+    expect(text).not.toContain("### general");
+    expect(text).not.toContain("Wikipedia");
+  });
 });

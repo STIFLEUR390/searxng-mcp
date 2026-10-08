@@ -121,6 +121,13 @@ Trailing slashes and a pasted `/search` suffix are normalized automatically. If 
 `localhost` and the connection fails (Node resolves it to IPv6 `::1` first), the server retries
 once on `127.0.0.1`.
 
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEARXNG_URL` | `http://localhost:8888` | Base URL of the SearXNG instance (see precedence above) |
+| `SEARXNG_TIMEOUT_MS` | `30000` | Per-request timeout in ms (min 500, max 300000) — raise it for slow instances |
+
 CLI flags: `--help`, `--version`.
 
 ## Client setup
@@ -158,7 +165,7 @@ With a global install, `command` can simply be `searxng-mcp` with no args (the d
 | `categories` | string[] | e.g. `["general"]`, `["it", "science"]`. Default `["general"]` |
 | `language` | string | Language code: `en`, `fr`, `de`, ... |
 | `pageno` | int 1–50 | Results page |
-| `time_range` | `day` \| `month` \| `year` | Restrict to recent results |
+| `time_range` | `day` \| `week` \| `month` \| `year` | Restrict to recent results |
 | `safesearch` | int 0–2 | 0=off, 1=moderate, 2=strict |
 | `engines` | string[] | Restrict to engines by name/shortcut, e.g. `["duckduckgo", "brave"]` |
 | `limit` | int 1–50 | Max results rendered (default 10) |
@@ -176,10 +183,15 @@ pinned to their category (images/videos also surface image + thumbnail URLs).
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string (required) | Partial query |
+| `language` | string | Language code for suggestions, e.g. `"fr"`, `"en"` |
 
 ### `searxng_config`
 
-No parameters. Returns categories and enabled engines grouped by category — useful to discover
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `include_engines` | bool | `true` | Set `false` for a compact view (counts only, no engine lists) |
+
+Returns categories and enabled engines grouped by category — useful to discover
 what the instance can search before picking categories/engines.
 
 ### `searxng_extract_content`
@@ -199,6 +211,12 @@ Fetches a page (typically a URL found with the search tools) and returns clean, 
 | `content_only` | bool | `true` | Extract only the main content area (`article`/`main`) when detectable |
 | `selector` | string | — | Advanced: extract only nodes matching this CSS selector |
 | `max_length` | int 500–200000 | `20000` | Truncate the content to this many characters |
+| `start_char` | int ≥ 0 | `0` | Start the output window at this character offset (page through long content with `max_length`) |
+| `headings_only` | bool | `false` | Return only the heading outline (h1–h6) instead of the full text |
+
+HTML pages go through the structural filtering described below. JSON bodies are returned
+pretty-printed in a fenced ```json block, other `text/*` bodies as fenced text; binary files
+(PDF, images, archives) are refused with an explicit error.
 
 Always removed regardless of options: `script`, `style`, `noscript`, `iframe`, forms, and noise
 banners (cookies, consent, popups, ads, newsletter boxes). The response reports which sections
@@ -240,7 +258,7 @@ It needs the footer legal notice too:
 | `403 Forbidden` in tool errors | JSON format disabled → add `json` to `search.formats` in `settings.yml` |
 | `429 Too Many Requests` | Instance rate limiter (`server.limiter`) blocking automated calls → adjust `limiter` or retry later |
 | `Could not reach SearXNG ... fetch failed` | Instance not running, wrong URL, or IPv6/IPv4 mismatch — the server already retries `localhost` on `127.0.0.1`; otherwise use `http://127.0.0.1:8888` explicitly |
-| `content-type ... is not HTML` | The extractor only processes HTML pages |
+| `content-type ... is not supported` | The extractor handles HTML, JSON and plain text; binary files (PDF, images) are refused |
 | Empty results | Some engines may be down on the instance — check `searxng_config` and the `unresponsive_engines` note in results |
 
 ## Development
@@ -248,7 +266,7 @@ It needs the footer legal notice too:
 ```bash
 bun install          # install dependencies
 bun run dev          # run the server from source (TypeScript)
-bun test             # 84 unit + integration tests (bun:test)
+bun test             # 102 unit + integration tests (bun:test)
 bunx tsc --noEmit    # strict typecheck
 bun run build        # bundle to dist/index.js (node target)
 ```
@@ -273,8 +291,8 @@ test/               # bun:test suites
 > npm username). Nothing changes for GitHub installs, and the CLI binary stays `searxng-mcp`.
 
 The package is **published**: [npmjs.com/package/@aplix39/searxng-mcp](https://www.npmjs.com/package/@aplix39/searxng-mcp)
-(v1.0.0, public, MIT). `prepublishOnly` runs typecheck + 84 tests + build on every publish,
-and the published tarball is byte-identical to the committed `dist/` bundle.
+(v1.0.0, public, MIT). `prepublishOnly` runs typecheck + 102 tests + build on every publish;
+the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle.
 
 Future releases:
 

@@ -1,10 +1,11 @@
 /**
- * HTML content extraction with structural filtering.
+ * Content extraction with structural filtering (HTML, JSON, plain text).
  *
  * Fetches a page, strips chrome (headers, footers, navigation, sidebars,
  * cookie banners, ads, ...), detects the main content area and renders clean,
  * agent-friendly text. Every removal decision is reported back so the calling
- * agent knows what was filtered out.
+ * agent knows what was filtered out. JSON and plain-text bodies are returned
+ * as fenced blocks; binary bodies are refused.
  *
  * Uses node-html-parser (small, zero-dependency DOM subset).
  */
@@ -37,6 +38,10 @@ export interface ExtractOptions {
   selector?: string;
   /** Max content length in characters (default 20000, max 200000). */
   maxLength?: number;
+  /** Start the output window at this character offset of the cleaned content (default 0). */
+  startChar?: number;
+  /** Return only the heading outline (h1–h6) instead of the full text. Default false. */
+  headingsOnly?: boolean;
 }
 
 export interface ExtractResult {
@@ -49,6 +54,8 @@ export interface ExtractResult {
   /** Human-readable list of section kinds that were removed. */
   removed: string[];
   originalLength: number;
+  /** Character offset the returned window starts at (start_char, default 0). */
+  startChar: number;
 }
 
 export class ExtractError extends Error {
@@ -67,6 +74,7 @@ const DEFAULT_MAX_LENGTH = 20_000;
 const MAX_LENGTH_CAP = 200_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024;
+const MAX_HEADINGS = 200;
 const USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/searxng-mcp)";
 
 const ENTITY_MAP: Record<string, string> = {
@@ -449,6 +457,17 @@ export function extractFromHtml(html: string, url: string, opts: ExtractOptions 
   const removed = new Set<Section>();
   cleanDom(root, opts, removed);
 
+  if (opts.headingsOnly) {
+    const headings: Heading[] = [];
+    collectHeadings(root, headings);
+    const shown = headings.slice(0, MAX_HEADINGS);
+    let outline = shown.map((h) => `${"#".repeat(h.level)} ${h.text}`).join("\n");
+    if (headings.length > shown.length) {
+      outline += `\n\n[… ${headings.length - shown.length} more headings omitted]`;
+    }
+    return finish(url, title, description, lang, outline || "(no headings found)", removed, opts);
+  }
+
   let scope: HTMLElement;
   if (opts.selector) {
     const matches = root.querySelectorAll(opts.selector);
@@ -476,6 +495,51 @@ export function extractFromHtml(html: string, url: string, opts: ExtractOptions 
   return finish(url, title, description, lang, content, removed, opts);
 }
 
+interface Heading {
+  level: number;
+  text: string;
+}
+
+/** Collect h1–h6 in document order (removed chrome is already detached). */
+function collectHeadings(node: Node, out: Heading[]): void {
+  for (const child of node.childNodes) {
+    const el = child as HTMLElement;
+    const tag = (el.tagName ?? "").toLowerCase();
+    if (/^h[1-6]$/.test(tag)) {
+      const text = normalizeText(el.text ?? "");
+      if (text) out.push({ level: Number(tag.slice(1)), text });
+      continue;
+    }
+    if (el.childNodes?.length) collectHeadings(el, out);
+  }
+}
+
+interface WindowedText {
+  windowed: string;
+  truncated: boolean;
+  startChar: number;
+  originalLength: number;
+}
+
+/** Apply start_char + max_length to a text block. */
+function applyWindow(text: string, opts: ExtractOptions, inlineNotice: boolean): WindowedText {
+  const maxLength = Math.min(opts.maxLength ?? DEFAULT_MAX_LENGTH, MAX_LENGTH_CAP);
+  const originalLength = text.length;
+  const startChar = Math.min(Math.max(Math.trunc(opts.startChar ?? 0), 0), originalLength);
+  const rest = text.slice(startChar);
+  if (rest.length > maxLength) {
+    return {
+      windowed: inlineNotice
+        ? `${rest.slice(0, maxLength).trimEnd()}\n\n[... truncated at ${maxLength} characters — raise max_length to get more]`
+        : rest.slice(0, maxLength).trimEnd(),
+      truncated: true,
+      startChar,
+      originalLength,
+    };
+  }
+  return { windowed: rest, truncated: false, startChar, originalLength };
+}
+
 function finish(
   url: string,
   title: string,
@@ -485,23 +549,50 @@ function finish(
   removed: Set<Section>,
   opts: ExtractOptions,
 ): ExtractResult {
-  const maxLength = Math.min(opts.maxLength ?? DEFAULT_MAX_LENGTH, MAX_LENGTH_CAP);
-  const originalLength = content.length;
-  let truncated = false;
-  let finalContent = content;
-  if (content.length > maxLength) {
-    truncated = true;
-    finalContent = `${content.slice(0, maxLength).trimEnd()}\n\n[... truncated at ${maxLength} characters — raise max_length to get more]`;
-  }
+  const { windowed, truncated, startChar, originalLength } = applyWindow(content, opts, true);
   return {
     url,
     title,
     description,
     lang,
-    content: finalContent,
+    content: windowed,
     truncated,
     removed: [...removed].map((s) => SECTION_LABELS[s]),
     originalLength,
+    startChar,
+  };
+}
+
+/** Render non-HTML bodies (JSON, plain text, ...) as fenced blocks. */
+function renderPlainBody(
+  body: string,
+  url: string,
+  opts: ExtractOptions,
+  kind: "json" | "text",
+): ExtractResult {
+  let pretty = body;
+  if (kind === "json") {
+    try {
+      pretty = JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+      // keep the raw body when it is not valid JSON
+    }
+  }
+  const { windowed, truncated, startChar, originalLength } = applyWindow(pretty, opts, false);
+  const fenceLang = kind === "json" && pretty !== body ? "json" : "";
+  let content = "```" + fenceLang + "\n" + windowed + "\n```";
+  if (truncated) {
+    const end = startChar + windowed.length;
+    content += `\n\n[... truncated: showing characters ${startChar}–${end} of ${originalLength} — raise max_length to get more]`;
+  }
+  return {
+    url,
+    title: "",
+    content,
+    truncated,
+    removed: [],
+    originalLength,
+    startChar,
   };
 }
 
@@ -536,7 +627,8 @@ export async function fetchAndExtract(
       res = await fetchFn(target, {
         method: "GET",
         headers: {
-          Accept: "text/html,application/xhtml+xml",
+          Accept:
+            "text/html,application/xhtml+xml,application/json,text/plain,application/xml;q=0.9,text/*;q=0.8,*/*;q=0.5",
           "User-Agent": deps.userAgent ?? USER_AGENT,
         },
         signal: controller.signal,
@@ -563,12 +655,7 @@ export async function fetchAndExtract(
     );
   }
 
-  const contentType = res.headers.get("content-type") ?? "";
-  if (contentType && !/html|xml/i.test(contentType) && !/text\//i.test(contentType)) {
-    throw new ExtractError(
-      `Refusing to extract from ${url}: content-type "${contentType}" is not HTML.`,
-    );
-  }
+  const contentType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
 
   const contentLength = Number(res.headers.get("content-length") ?? 0);
   if (contentLength > maxBytes) {
@@ -577,12 +664,24 @@ export async function fetchAndExtract(
     );
   }
 
-  const html = await res.text();
-  if (html.length > maxBytes) {
+  const body = await res.text();
+  if (body.length > maxBytes) {
     throw new ExtractError(
       `Refusing to extract from ${url}: body is larger than the ${maxBytes} byte limit.`,
     );
   }
 
-  return extractFromHtml(html, url, opts);
+  if (contentType.includes("json")) {
+    return renderPlainBody(body, url, opts, "json");
+  }
+  if (contentType && !/html|xml/.test(contentType)) {
+    if (contentType.startsWith("text/")) {
+      return renderPlainBody(body, url, opts, "text");
+    }
+    throw new ExtractError(
+      `Refusing to extract from ${url}: content-type "${contentType}" is not supported. ` +
+        `HTML, JSON and plain-text bodies are supported; binary files (PDF, images, archives) are not.`,
+    );
+  }
+  return extractFromHtml(body, url, opts);
 }

@@ -80,9 +80,9 @@ const coreSearchShape = {
     .optional()
     .describe("Page number of results to fetch (default 1). Use to paginate."),
   time_range: z
-    .enum(["day", "month", "year"])
+    .enum(["day", "week", "month", "year"])
     .optional()
-    .describe("Restrict results to the last day, month or year (engines that support it)."),
+    .describe("Restrict results to the last day, week, month or year (engines that support it)."),
   safesearch: z
     .number()
     .int()
@@ -219,12 +219,16 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
         "Useful to refine or expand a query before searching.",
       inputSchema: {
         q: z.string().min(1).describe("Partial search query to get suggestions for."),
+        language: z
+          .string()
+          .optional()
+          .describe('Language code for suggestions, e.g. "fr", "en". Default: instance setting.'),
       },
       annotations: readOnly,
     },
     async (args) => {
       try {
-        const suggestions = await client.autocomplete(args.q);
+        const suggestions = await client.autocomplete(args.q, args.language);
         return ok(formatAutocomplete(args.q, suggestions));
       } catch (err) {
         return fail(err);
@@ -239,13 +243,21 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
       description:
         "Describe the user's SearXNG instance: available categories and enabled engines grouped by category. " +
         "Call this first when you need to know what can be searched on this instance.",
-      inputSchema: {},
+      inputSchema: {
+        include_engines: z
+          .boolean()
+          .optional()
+          .describe(
+            "List enabled engines grouped by category (default: true). " +
+              "Set false for a compact view with counts only (big instances list hundreds of engines).",
+          ),
+      },
       annotations: readOnly,
     },
-    async () => {
+    async (args) => {
       try {
         const config = await client.config();
-        return ok(formatConfig(config, client.baseUrl));
+        return ok(formatConfig(config, client.baseUrl, { includeEngines: args.include_engines }));
       } catch (err) {
         return fail(err);
       }
@@ -303,6 +315,22 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
           .max(200000)
           .optional()
           .describe("Truncate the extracted content to this many characters (default 20000)."),
+        start_char: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            "Start the output window at this character offset of the extracted content (default 0). " +
+              "Combine with max_length to page through long pages.",
+          ),
+        headings_only: z
+          .boolean()
+          .optional()
+          .describe(
+            "Return only the heading outline (h1–h6, indented by depth) instead of the full text. " +
+              "Use to map a long page before extracting its sections.",
+          ),
       },
       annotations: readOnly,
     },
@@ -321,6 +349,8 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
             contentOnly: args.content_only,
             selector: args.selector,
             maxLength: args.max_length,
+            startChar: args.start_char,
+            headingsOnly: args.headings_only,
           },
           { fetchFn: options.fetchFn },
         );
@@ -333,6 +363,9 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
           `Content: ${result.originalLength} chars extracted` +
             (result.truncated ? ` — truncated to ${result.content.length}` : ""),
         );
+        if (result.startChar > 0) {
+          parts.push(`Window: starting at character ${result.startChar} of ${result.originalLength}`);
+        }
         if (result.removed.length) {
           parts.push(`Removed sections: ${result.removed.join(", ")} (use include_* options to keep them)`);
         }

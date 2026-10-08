@@ -2,6 +2,10 @@
 
 export const ENV_URL = "SEARXNG_URL";
 export const DEFAULT_BASE_URL = "http://localhost:8888";
+export const ENV_TIMEOUT_MS = "SEARXNG_TIMEOUT_MS";
+export const DEFAULT_TIMEOUT_MS = 30_000;
+export const MIN_TIMEOUT_MS = 500;
+export const MAX_TIMEOUT_MS = 300_000;
 
 export class ConfigError extends Error {
   override name = "ConfigError";
@@ -30,9 +34,13 @@ Configuration:
     2. ${ENV_URL} environment variable
     3. default: ${DEFAULT_BASE_URL}
 
+  ${ENV_TIMEOUT_MS} sets the per-request timeout in milliseconds
+  (default ${DEFAULT_TIMEOUT_MS}, min ${MIN_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}).
+
 Examples:
   searxng-mcp --url http://localhost:8888
   SEARXNG_URL=https://searx.example.org searxng-mcp
+  ${ENV_TIMEOUT_MS}=60000 searxng-mcp
 
 The server communicates over stdio and is meant to be launched by an MCP
 client (Claude Desktop, Claude Code, Cursor, ...).`;
@@ -106,4 +114,22 @@ export function resolveBaseUrl(
   const fromCli = parseArgs(argv).baseUrl;
   const raw = fromCli ?? env[ENV_URL] ?? DEFAULT_BASE_URL;
   return normalizeBaseUrl(raw);
+}
+
+/**
+ * Resolve the per-request timeout from SEARXNG_TIMEOUT_MS.
+ * Unset/empty → default; must be an integer in [MIN_TIMEOUT_MS, MAX_TIMEOUT_MS].
+ */
+export function resolveTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env[ENV_TIMEOUT_MS];
+  if (raw === undefined || raw.trim() === "") return DEFAULT_TIMEOUT_MS;
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < MIN_TIMEOUT_MS || value > MAX_TIMEOUT_MS) {
+    throw new ConfigError(
+      `Invalid ${ENV_TIMEOUT_MS}: "${raw}". Expected an integer between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}.`,
+    );
+  }
+  return value;
 }

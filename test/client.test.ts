@@ -57,12 +57,12 @@ describe("SearXNGClient.search", () => {
       categories: ["news", "videos"],
       language: "fr",
       pageno: 2,
-      timeRange: "week" as never,
+      timeRange: "week",
       safesearch: 2,
       engines: ["duckduckgo", "brave"],
     });
 
-    // time_range only accepts day|month|year; week is filtered out by us? No: passed through.
+    // time_range (including week) is forwarded verbatim.
     const url = new URL(calls[0]!.url);
     expect(url.origin + url.pathname).toBe("http://localhost:8888/search");
     expect(url.searchParams.get("q")).toBe("searxng mcp");
@@ -70,6 +70,7 @@ describe("SearXNGClient.search", () => {
     expect(url.searchParams.get("categories")).toBe("news,videos");
     expect(url.searchParams.get("language")).toBe("fr");
     expect(url.searchParams.get("pageno")).toBe("2");
+    expect(url.searchParams.get("time_range")).toBe("week");
     expect(url.searchParams.get("safesearch")).toBe("2");
     expect(url.searchParams.get("engines")).toBe("duckduckgo,brave");
     expect(calls[0]!.accept).toBe("application/json");
@@ -150,6 +151,20 @@ describe("SearXNGClient.autocomplete", () => {
     const { fetchFn } = mockFetch(() => ({ body: { not: "an array" } }));
     const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
     expect(await client.autocomplete("a")).toEqual([]);
+  });
+
+  test("forwards the language parameter when provided", async () => {
+    const { fetchFn, calls } = mockFetch(() => ({ body: ["bonj", ["bonjour"]] }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await client.autocomplete("bonj", "fr");
+    expect(new URL(calls[0]!.url).searchParams.get("language")).toBe("fr");
+  });
+
+  test("omits the language parameter when not provided", async () => {
+    const { fetchFn, calls } = mockFetch(() => ({ body: [] }));
+    const client = new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn });
+    await client.autocomplete("bonj");
+    expect(new URL(calls[0]!.url).searchParams.get("language")).toBeNull();
   });
 });
 

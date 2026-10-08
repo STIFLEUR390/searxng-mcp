@@ -99,12 +99,13 @@ CLI contract:
 ## 5. SearXNG API mapping
 
 All requests are `GET`, `Accept: application/json`, with a descriptive `User-Agent`
-(`searxng-mcp/<version>`), per-request timeout 30 s.
+(`searxng-mcp/<version>`), per-request timeout 30 s by default (`SEARXNG_TIMEOUT_MS`,
+500–300000 ms).
 
 | MCP tool | SearXNG endpoint | Parameters sent |
 |----------|------------------|-----------------|
 | `searxng_search` (+ news/images/videos variants) | `GET /search` | `q`, `format=json`, `categories`, `language`, `pageno`, `time_range`, `safesearch`, `engines` |
-| `searxng_autocomplete` | `GET /autocompleter` | `q` |
+| `searxng_autocomplete` | `GET /autocompleter` | `q`, `language` (when provided) |
 | `searxng_config` | `GET /config` | — |
 | `searxng_extract_content` | *(none — direct page fetch)* | — |
 
@@ -126,7 +127,7 @@ Common search input (shared by the four search tools):
 | `categories` | string[] | SearXNG category names (`searxng_search` only) | `["general"]` (instance default) |
 | `language` | string | language code | instance default |
 | `pageno` | int | 1–50 | 1 |
-| `time_range` | enum | `day` \| `month` \| `year` | unset |
+| `time_range` | enum | `day` \| `week` \| `month` \| `year` | unset |
 | `safesearch` | int | 0–2 | instance default |
 | `engines` | string[] | engine names/shortcuts | all enabled engines |
 | `limit` | int | 1–50, output-side truncation | 10 |
@@ -170,13 +171,15 @@ when available; news surfaces `published:`/metadata.
 
 ### 6.3 `searxng_autocomplete`
 
-Input: `q` (string, required). Output: `Suggestions for "<q>":` + bullet list, or
-`No suggestions for "<q>".`
+Input: `q` (string, required), `language` (string, optional — forwarded to `/autocompleter` when
+provided). Output: `Suggestions for "<q>":` + bullet list, or `No suggestions for "<q>".`
 
 ### 6.4 `searxng_config`
 
-No input. Output: instance URL, autocomplete provider, default locale/theme/SafeSearch, category
-list, and enabled engines grouped by category with counts (`Engines: <n> enabled of <m> total`).
+Input: `include_engines` (bool, default true — set false for a compact view: counts only, no
+engine lists). Output: instance URL, autocomplete provider, default locale/theme/SafeSearch,
+category list, and enabled engines grouped by category with counts (`Engines: <n> enabled of
+<m> total`).
 
 ### 6.5 `searxng_extract_content`
 
@@ -195,6 +198,8 @@ Fetches one page and returns filtered, readable text. Input:
 | `content_only` | bool | `true` | restrict to main content area when detectable |
 | `selector` | string | — | CSS selector (subset); overrides `content_only` |
 | `max_length` | int | `20000` (500–200000) | truncation limit |
+| `start_char` | int ≥ 0 | `0` | start the output window at this character offset |
+| `headings_only` | bool | `false` | return only the h1–h6 outline instead of the full text |
 
 Output header + body:
 
@@ -204,6 +209,7 @@ URL: <url>
 [Language: <lang>]
 [Description: <meta description>]
 Content: <n> chars extracted[ — truncated to <m>]
+[Window: starting at character <k> of <n>]
 [Removed sections: <...> (use include_* options to keep them)]
 
 <extracted content>
@@ -211,10 +217,17 @@ Content: <n> chars extracted[ — truncated to <m>]
 
 Behavioral guarantees:
 
-- fetch guards: absolute http(s) only; HTTP errors surfaced with status; non-HTML content
-  types refused; bodies > 5 MiB refused; 30 s timeout; IPv4 fallback for `localhost`.
+- fetch guards: absolute http(s) only; HTTP errors surfaced with status; bodies > 5 MiB refused;
+  30 s timeout by default (`SEARXNG_TIMEOUT_MS`); IPv4 fallback for `localhost`.
+- content types: HTML (and XHTML/XML) go through the filtering pipeline; JSON bodies are returned
+  pretty-printed in a fenced ```json block (raw fenced body when parsing fails); other `text/*`
+  bodies are returned as fenced text; binary content types (PDF, images, archives, octet-stream)
+  are refused with the supported types listed; an empty content-type is treated as HTML.
+- `headings_only`: heading outline collected in document order after chrome removal (max 200,
+  omitted count reported); `(no headings found)` when the page has none.
+- `start_char`/`max_length` window the (cleaned) content; the header reports the window offset.
 - extraction pipeline: parse DOM → capture metadata → remove chrome/noise → locate content
-  root → render text → truncate.
+  root → render text → window/truncate.
 - `selector` with zero matches → recoverable tool error suggesting simpler selectors.
 
 ## 7. Extraction & filtering specification
@@ -283,7 +296,7 @@ and recover. Matrix:
 | Unexpected response shape | missing `results[]` | missing-field message |
 | Extract: invalid/non-http URL | `new URL()` / protocol check | expected URL form |
 | Extract: fetch HTTP error | `!res.ok` | status + bot-protection/JS hint |
-| Extract: non-HTML content-type | header check | actual content-type |
+| Extract: unsupported content-type (binary) | header check | actual content-type + supported types (HTML, JSON, plain text) |
 | Extract: oversized body | content-length / text length > 5 MiB | byte limit |
 | Extract: timeout | `AbortError` | duration |
 | Extract: selector no match | `querySelectorAll` empty | suggestion to simplify the selector |
@@ -312,15 +325,15 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 ## 10. Testing strategy
 
-Runner: `bun:test`. Suites (84 tests):
+Runner: `bun:test`. Suites (102 tests):
 
 | Suite | Coverage |
 |-------|----------|
-| `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default |
-| `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, autocompleter tuple parsing, IPv4 fallback behavior |
-| `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers/infoboxes/corrections/suggestions/unresponsive engines, config grouping |
-| `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), truncation, fetch guards (URL/protocol/HTTP/content-type/size) |
-| `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding, domain filtering, category pinning, error propagation (`isError`), config/autocomplete/extract tools |
+| `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default, `SEARXNG_TIMEOUT_MS` parsing (default/valid/out-of-range) |
+| `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, `time_range=week` + autocomplete `language` forwarding, autocompleter tuple parsing, IPv4 fallback behavior |
+| `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers/infoboxes/corrections/suggestions/unresponsive engines, config grouping + compact `includeEngines: false` mode |
+| `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), `start_char` windowing, `headings_only` outline, truncation, fetch guards (URL/protocol/HTTP/content-type/size) incl. JSON/text fenced rendering and binary refusal |
+| `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding (incl. `time_range=week`), domain filtering, category pinning, error propagation (`isError`), config/autocomplete (`language`)/extract (`start_char`, `headings_only`) tools |
 
 All HTTP I/O is injectable (`FetchFn`), so tests are hermetic; a manual smoke test against a
 real instance validates the shipped `dist` bundle over stdio.

@@ -160,7 +160,16 @@ export function formatAutocomplete(q: string, suggestions: string[]): string {
   return [`Suggestions for "${q}":`, ...suggestions.map((s) => `- ${s}`)].join("\n");
 }
 
-export function formatConfig(config: SearXNGConfig, baseUrl: string): string {
+export interface ConfigFormatOptions {
+  /** List enabled engines grouped by category (default true). */
+  includeEngines?: boolean;
+}
+
+export function formatConfig(
+  config: SearXNGConfig,
+  baseUrl: string,
+  opts: ConfigFormatOptions = {},
+): string {
   const parts: string[] = [];
   parts.push(`# SearXNG instance`);
   parts.push(`URL: ${baseUrl}`);
@@ -180,6 +189,7 @@ export function formatConfig(config: SearXNGConfig, baseUrl: string): string {
   if (engines.length) {
     parts.push("");
     parts.push(`## Engines: ${enabled.length} enabled of ${engines.length} total`);
+    if (opts.includeEngines === false) return parts.join("\n");
     const byCategory = new Map<string, string[]>();
     for (const engine of enabled) {
       for (const category of engine.categories ?? ["uncategorized"]) {

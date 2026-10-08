@@ -14,7 +14,7 @@ import type {
   SearXNGSearchResponse,
 } from "./types.ts";
 
-export type TimeRange = "day" | "month" | "year";
+export type TimeRange = "day" | "week" | "month" | "year";
 
 /** Injectable fetch signature (structural subset of the global fetch). */
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -132,12 +132,13 @@ export class SearXNGClient {
    *   [query, suggestions[], corrections[], engines[], metadata{}]
    * Some instances may return a flat string array instead.
    */
-  async autocomplete(q: string): Promise<string[]> {
+  async autocomplete(q: string, language?: string): Promise<string[]> {
     if (!q.trim()) {
       throw new SearXNGError("Autocomplete query must not be empty.");
     }
     const url = new URL(`${this.baseUrl}/autocompleter`);
     url.searchParams.set("q", q);
+    if (language?.trim()) url.searchParams.set("language", language.trim());
     const json = await this.getJson(url);
     if (!Array.isArray(json)) return [];
     if (json.every((item) => typeof item === "string")) {

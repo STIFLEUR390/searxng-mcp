@@ -11,10 +11,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { SearXNGClient } from "./src/client.ts";
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_TIMEOUT_MS,
   ENV_URL,
   HELP_TEXT,
   parseArgs,
   resolveBaseUrl,
+  resolveTimeoutMs,
 } from "./src/config.ts";
 import { createServer } from "./src/server.ts";
 import { VERSION } from "./src/version.ts";
@@ -48,7 +50,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const client = new SearXNGClient({ baseUrl });
+  let timeoutMs: number;
+  try {
+    timeoutMs = resolveTimeoutMs(process.env);
+  } catch (err) {
+    console.error(`searxng-mcp: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+
+  const client = new SearXNGClient({ baseUrl, timeoutMs });
   const server = createServer(client, { version: VERSION });
 
   // stdout is reserved for the MCP protocol: log to stderr only.
@@ -57,7 +67,10 @@ async function main(): Promise<void> {
     : process.env[ENV_URL]
       ? `${ENV_URL} env var`
       : `default (${DEFAULT_BASE_URL})`;
-  console.error(`[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})`);
+  console.error(
+    `[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})` +
+      (timeoutMs !== DEFAULT_TIMEOUT_MS ? `, timeout ${timeoutMs}ms` : ""),
+  );
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
