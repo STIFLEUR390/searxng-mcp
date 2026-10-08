@@ -19,7 +19,7 @@
     "build": "bun build ./index.ts --target=node --outdir=dist && chmod +x dist/index.js",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "version": "node scripts/sync-version.mjs && git add src/version.ts",
+    "version": "node scripts/sync-version.mjs && bun run build && git add src/version.ts dist/index.js",
     "prepublishOnly": "bun run typecheck && bun test && bun run build"
   },
   "repository": {

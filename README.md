@@ -291,8 +291,11 @@ test/               # bun:test suites
 > npm username). Nothing changes for GitHub installs, and the CLI binary stays `searxng-mcp`.
 
 The package is **published**: [npmjs.com/package/@aplix39/searxng-mcp](https://www.npmjs.com/package/@aplix39/searxng-mcp)
-(latest: **v1.0.2**, public, MIT). `prepublishOnly` runs typecheck + 103 tests + build on every
-publish; the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle.
+(latest: **v1.0.3**, public, MIT). `prepublishOnly` runs typecheck + 103 tests + build on every
+publish; the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle,
+and the published v1.0.3 tarball was re-validated the same way (shasum match, `--version` reporting
+1.0.3, isolated `npm i` + MCP handshake). `npm version` now rebuilds `dist/` too, so the tag, the
+commit and the published bundle always carry the same version string.
 
 Future releases:
 
