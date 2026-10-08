@@ -28178,6 +28178,20 @@ function formatResult(result, index, kind) {
   return lines.join(`
 `);
 }
+function asText(value) {
+  if (typeof value === "string")
+    return value;
+  if (value && typeof value === "object") {
+    const obj = value;
+    for (const key of ["answer", "correction", "suggestion"]) {
+      const field = obj[key];
+      if (typeof field === "string" && field)
+        return field;
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
 function formatSearchResponse(resp, opts = {}) {
   const kind = opts.kind ?? "general";
   const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), 50);
@@ -28195,8 +28209,12 @@ function formatSearchResponse(resp, opts = {}) {
   if (resp.answers?.length) {
     parts.push("");
     parts.push("## Answer");
-    for (const answer of resp.answers)
-      parts.push(answer);
+    for (const answer of resp.answers) {
+      parts.push(asText(answer));
+      const url = typeof answer === "object" && answer !== null ? answer.url : undefined;
+      if (typeof url === "string" && url)
+        parts.push(`   ${url}`);
+    }
   }
   if (resp.infoboxes?.length) {
     parts.push("");
@@ -28236,12 +28254,12 @@ function formatSearchResponse(resp, opts = {}) {
     parts.push("");
     parts.push("## Corrections");
     for (const c of resp.corrections)
-      parts.push(`- ${c}`);
+      parts.push(`- ${asText(c)}`);
   }
   if (resp.suggestions?.length) {
     parts.push("");
     parts.push("## Related searches");
-    parts.push(resp.suggestions.map((s) => `- ${s}`).join(`
+    parts.push(resp.suggestions.map((s) => `- ${asText(s)}`).join(`
 `));
   }
   if (resp.unresponsive_engines?.length) {
@@ -28302,7 +28320,7 @@ function formatConfig(config, baseUrl, opts = {}) {
 }
 
 // src/version.ts
-var VERSION = "1.0.3";
+var VERSION = "1.0.4";
 
 // src/server.ts
 var SERVER_NAME = "searxng-mcp";

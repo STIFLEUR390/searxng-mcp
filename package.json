@@ -1,6 +1,6 @@
 {
   "name": "@aplix39/searxng-mcp",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MCP server for SearXNG: privacy-friendly web, news, image and video search for AI agents, with page content extraction and filtering",
   "mcpName": "@aplix39/searxng-mcp",
   "type": "module",
