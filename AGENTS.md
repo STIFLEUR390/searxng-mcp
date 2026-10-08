@@ -21,6 +21,8 @@ bun run index.ts     # same (no devDependencies required at runtime)
 bun test             # tests (bun:test)
 bun run build        # bundle to dist/index.js (node target)
 bunx tsc --noEmit    # typecheck — no script defined, run this directly
+npm version patch    # release bump: auto-syncs src/version.ts (scripts/sync-version.mjs),
+                     # commits + tags — never bump package.json by hand
 ```
 
 There is no linter, formatter, CI workflow, or pre-commit config. Don't invent one

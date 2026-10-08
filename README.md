@@ -266,7 +266,7 @@ It needs the footer legal notice too:
 ```bash
 bun install          # install dependencies
 bun run dev          # run the server from source (TypeScript)
-bun test             # 102 unit + integration tests (bun:test)
+bun test             # 103 unit + integration tests (bun:test)
 bunx tsc --noEmit    # strict typecheck
 bun run build        # bundle to dist/index.js (node target)
 ```
@@ -291,16 +291,32 @@ test/               # bun:test suites
 > npm username). Nothing changes for GitHub installs, and the CLI binary stays `searxng-mcp`.
 
 The package is **published**: [npmjs.com/package/@aplix39/searxng-mcp](https://www.npmjs.com/package/@aplix39/searxng-mcp)
-(v1.0.0, public, MIT). `prepublishOnly` runs typecheck + 102 tests + build on every publish;
-the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle.
+(latest: **v1.0.2**, public, MIT). `prepublishOnly` runs typecheck + 103 tests + build on every
+publish; the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle.
 
 Future releases:
 
 ```bash
-npm login                       # authenticate as the npm user owning the scope
-npm publish --access public    # the account has 2FA: pass --otp=<code>, or use an
-                                # Automation token (npmjs.com → settings → access tokens)
+npm version patch            # bumps package.json AND src/version.ts (auto-sync script),
+                             # commits + tags — never bump package.json by hand
+git push --follow-tags
+npm publish --access public  # with a token configured: no interactive 2FA prompt
 ```
+
+To publish without confirming 2FA in the browser every time, create a token on npmjs.com
+(avatar → Access Tokens → Generate New Token → **Granular Access Token**, packages: `@aplix39`
+read-and-write; copy it once) and reference it through an environment variable so it never sits
+in plaintext in `~/.npmrc`:
+
+```bash
+export NPM_TOKEN=npm_xxx        # persist in ~/.bashrc or ~/.zshrc
+npm config set '//registry.npmjs.org/:_authToken' '${NPM_TOKEN}'
+npm whoami                      # must print the npm username owning the scope
+```
+
+If npm still prompts for a 2FA code with a granular token on your account, create a classic
+**Automation** token instead (same `npm config set` line): it is designed to bypass publish 2FA.
+Keep account 2FA enabled; tokens are expirable and revocable from the same Access Tokens page.
 
 ## License
 

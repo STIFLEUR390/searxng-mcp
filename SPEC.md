@@ -325,7 +325,7 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 ## 10. Testing strategy
 
-Runner: `bun:test`. Suites (102 tests):
+Runner: `bun:test`. Suites (103 tests):
 
 | Suite | Coverage |
 |-------|----------|
@@ -334,6 +334,7 @@ Runner: `bun:test`. Suites (102 tests):
 | `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers/infoboxes/corrections/suggestions/unresponsive engines, config grouping + compact `includeEngines: false` mode |
 | `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), `start_char` windowing, `headings_only` outline, truncation, fetch guards (URL/protocol/HTTP/content-type/size) incl. JSON/text fenced rendering and binary refusal |
 | `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding (incl. `time_range=week`), domain filtering, category pinning, error propagation (`isError`), config/autocomplete (`language`)/extract (`start_char`, `headings_only`) tools |
+| `test/version.test.ts` | `VERSION` ↔ `package.json` consistency (the published `--version` must equal the npm version; enforced by the `version` lifecycle script + this guard) |
 
 All HTTP I/O is injectable (`FetchFn`), so tests are hermetic; a manual smoke test against a
 real instance validates the shipped `dist` bundle over stdio.
