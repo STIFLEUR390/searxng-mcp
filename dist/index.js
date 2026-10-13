@@ -28370,7 +28370,7 @@ function formatConfig(config, baseUrl, opts = {}) {
 }
 
 // src/version.ts
-var VERSION = "1.0.4";
+var VERSION = "1.0.5";
 
 // src/server.ts
 var SERVER_NAME = "searxng-mcp";
