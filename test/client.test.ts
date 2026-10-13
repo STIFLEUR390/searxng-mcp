@@ -228,3 +228,71 @@ describe("SearXNGClient.config", () => {
     expect(calls[0]!.url).toBe("http://localhost:8888/config");
   });
 });
+
+describe("SearXNGClient.resolveEngines", () => {
+  const engineConfig = {
+    categories: ["general"],
+    engines: [
+      { name: "duckduckgo", shortcut: "ddg", categories: ["general"], enabled: true },
+      { name: "wikipedia", shortcut: "wp", categories: ["general"], enabled: true },
+      { name: "google cse", shortcut: "gcs", categories: ["general"], enabled: true },
+    ],
+  };
+
+  function clientWithConfig(body: unknown, status = 200) {
+    const { fetchFn, calls } = mockFetch((url) =>
+      url.pathname === "/config" ? { status, body } : { body: sampleResults },
+    );
+    return { client: new SearXNGClient({ baseUrl: "http://localhost:8888", fetchFn }), calls };
+  }
+
+  test("resolves shortcuts to canonical engine names", async () => {
+    const { client } = clientWithConfig(engineConfig);
+    const { resolved, unknown } = await client.resolveEngines(["ddg", "wp"]);
+    expect(resolved).toEqual(["duckduckgo", "wikipedia"]);
+    expect(unknown).toEqual([]);
+  });
+
+  test("matches names case-insensitively", async () => {
+    const { client } = clientWithConfig(engineConfig);
+    const { resolved, unknown } = await client.resolveEngines(["Wikipedia", "GOOGLE CSE"]);
+    expect(resolved).toEqual(["wikipedia", "google cse"]);
+    expect(unknown).toEqual([]);
+  });
+
+  test("reports unknown engines and keeps valid ones", async () => {
+    const { client } = clientWithConfig(engineConfig);
+    const { resolved, unknown } = await client.resolveEngines(["duckduckgo", "nope", "zzz"]);
+    expect(resolved).toEqual(["duckduckgo"]);
+    expect(unknown).toEqual(["nope", "zzz"]);
+  });
+
+  test("deduplicates resolved names, keeps request order", async () => {
+    const { client } = clientWithConfig(engineConfig);
+    const { resolved, unknown } = await client.resolveEngines(["wp", "wikipedia", "Wikipedia"]);
+    expect(resolved).toEqual(["wikipedia"]);
+    expect(unknown).toEqual([]);
+  });
+
+  test("caches the engine index across calls", async () => {
+    const { client, calls } = clientWithConfig(engineConfig);
+    await client.resolveEngines(["ddg"]);
+    await client.resolveEngines(["wp"]);
+    await client.resolveEngines(["bogus"]);
+    expect(calls.filter((c) => c.url === "http://localhost:8888/config")).toHaveLength(1);
+  });
+
+  test("passes engines through unchanged when /config fails", async () => {
+    const { client } = clientWithConfig({ error: "nope" }, 500);
+    const { resolved, unknown } = await client.resolveEngines(["ddg", "bogus"]);
+    expect(resolved).toEqual(["ddg", "bogus"]);
+    expect(unknown).toEqual([]);
+  });
+
+  test("passes engines through unchanged when the config has no engines", async () => {
+    const { client } = clientWithConfig({ categories: ["general"], engines: [] });
+    const { resolved, unknown } = await client.resolveEngines(["bogus"]);
+    expect(resolved).toEqual(["bogus"]);
+    expect(unknown).toEqual([]);
+  });
+});

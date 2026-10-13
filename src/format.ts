@@ -14,6 +14,8 @@ export interface SearchFormatOptions {
   kind?: ResultKind;
   /** Number of results before domain filtering (when filtering happened). */
   totalBeforeFilter?: number;
+  /** Requested engine names that do not exist on the instance (dropped before the search). */
+  ignoredEngines?: string[];
 }
 
 const DEFAULT_LIMIT = 10;
@@ -112,6 +114,14 @@ export function formatSearchResponse(
       ? `${shown} shown of ${resp.results.length} matching results (filtered from ${total})`
       : `${shown} of ${resp.results.length} results`,
   );
+
+  if (opts.ignoredEngines?.length) {
+    parts.push("");
+    parts.push(
+      `Note: ignored unknown engines: ${opts.ignoredEngines.join(", ")} — not found on this instance ` +
+        `(call searxng_config for valid names).`,
+    );
+  }
 
   if (resp.answers?.length) {
     parts.push("");

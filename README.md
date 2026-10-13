@@ -167,7 +167,7 @@ With a global install, `command` can simply be `searxng-mcp` with no args (the d
 | `pageno` | int 1–50 | Results page |
 | `time_range` | `day` \| `week` \| `month` \| `year` | Restrict to recent results |
 | `safesearch` | int 0–2 | 0=off, 1=moderate, 2=strict |
-| `engines` | string[] | Restrict to engines by name/shortcut, e.g. `["duckduckgo", "brave"]` |
+| `engines` | string[] | Restrict to engines by name or shortcut (case-insensitive), e.g. `["duckduckgo", "brave"]` or `["ddg"]`. Shortcuts are resolved against the instance; if **all** requested engines are unknown the call fails with an explicit error, if only **some** are unknown the valid ones are used and the output reports `ignored unknown engines` |
 | `limit` | int 1–50 | Max results rendered (default 10) |
 | `include_domains` | string[] | Keep only results on these domains |
 | `exclude_domains` | string[] | Drop results on these domains |
@@ -258,15 +258,56 @@ It needs the footer legal notice too:
 | `403 Forbidden` in tool errors | JSON format disabled → add `json` to `search.formats` in `settings.yml` |
 | `429 Too Many Requests` | Instance rate limiter (`server.limiter`) blocking automated calls → adjust `limiter` or retry later |
 | `Could not reach SearXNG ... fetch failed` | Instance not running, wrong URL, or IPv6/IPv4 mismatch — the server already retries `localhost` on `127.0.0.1`; otherwise use `http://127.0.0.1:8888` explicitly |
+| `Missing key: q` | The query parameter is **`q`**, not `query` — call the tool with `{ "q": "..." }` |
+| `Unknown engines: ...` | None of the requested engines exist on the instance → call `searxng_config` for valid names (shortcuts like `ddg` are accepted) |
+| `ignored unknown engines: ...` in results | Some requested engines don't exist; the valid ones were still searched |
 | `content-type ... is not supported` | The extractor handles HTML, JSON and plain text; binary files (PDF, images) are refused |
 | Empty results | Some engines may be down on the instance — check `searxng_config` and the `unresponsive_engines` note in results |
+
+### Engine failures that come from the instance, not from this MCP
+
+Some errors reported by search results (`Note: some engines did not respond: ...`) are produced
+by the SearXNG instance itself. This MCP only relays them — the fix belongs in your
+`settings.yml`:
+
+| Reported failure | What it means | How to avoid/correct it |
+|------------------|---------------|-------------------------|
+| `brave` → `Suspended: too many requests` | Brave rate-limits the instance's IP | SearXNG auto-suspends the engine for a while (graceful degradation). Reduce query volume, or set a `using_tor_proxy`/proxy pool, or disable `brave` until it recovers |
+| `duckduckgo` → `CAPTCHA` | DuckDuckGo challenges the instance's IP (shared/datacenter IPs are flagged) | Run the instance from a residential/clean IP, or disable the engine: `- name: duckduckgo` + `disabled: true` |
+| `google` (news/videos) → `access denied` | Google blocks the instance's IP or lacks cookies/headers | Usually not fixable from settings — leave Google news/videos disabled and rely on the other news engines (Bing, GDELT, ...) |
+| `reuters`, `vimeo`, ... → `HTTP error` | The upstream site changed/blocked the scraper | Update SearXNG (`git pull` + restart) — engine fixes ship upstream; disable the engine meanwhile |
+| `wikidata` → `timeout` | Wikidata is slow for the instance's `outgoing` budget | Raise `outgoing.request_timeout` (e.g. `10.0`) or disable `wikidata` |
+
+Inspect which engines answer on your instance:
+
+```bash
+curl -s 'http://localhost:8888/config' | jq '.engines[] | select(.enabled) | .name'
+# or ask the agent: searxng_config { "include_engines": true }
+```
+
+Useful `settings.yml` snippets:
+
+```yaml
+# Disable an engine that keeps failing
+engines:
+  - name: duckduckgo
+    disabled: true
+
+# Give slow engines more time
+outgoing:
+  request_timeout: 10.0
+```
+
+To restrict a search to the engines that *do* work, pass them explicitly:
+`searxng_search { "q": "...", "engines": ["google cse", "wikipedia", "bing"] }` — unknown names
+are now rejected or reported instead of silently falling back to all default engines.
 
 ## Development
 
 ```bash
 bun install          # install dependencies
 bun run dev          # run the server from source (TypeScript)
-bun test             # 106 unit + integration tests (bun:test)
+bun test             # 118 unit + integration tests (bun:test)
 bunx tsc --noEmit    # strict typecheck
 bun run build        # bundle to dist/index.js (node target)
 ```
@@ -291,7 +332,7 @@ test/               # bun:test suites
 > npm username). Nothing changes for GitHub installs, and the CLI binary stays `searxng-mcp`.
 
 The package is **published**: [npmjs.com/package/@aplix39/searxng-mcp](https://www.npmjs.com/package/@aplix39/searxng-mcp)
-(latest: **v1.0.4**, public, MIT). `prepublishOnly` runs typecheck + 106 tests + build on every
+(latest: **v1.0.4**, public, MIT). `prepublishOnly` runs typecheck + 118 tests + build on every
 publish; the published v1.0.0 tarball was validated byte-identical to the committed `dist/` bundle,
 and the published v1.0.3/v1.0.4 tarballs were re-validated the same way (shasum match, `--version` reporting
 the published version, isolated `npm i` + MCP handshake). `npm version` now rebuilds `dist/` too, so the tag, the

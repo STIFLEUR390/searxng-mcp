@@ -111,6 +111,72 @@ describe("MCP server integration", () => {
     expect(url.searchParams.get("format")).toBe("json");
   });
 
+  test("searxng_search resolves engine shortcuts before searching", async () => {
+    const searchUrls: string[] = [];
+    const mcp = await connect(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/config") {
+        return jsonResponse({
+          categories: ["general"],
+          engines: [
+            { name: "duckduckgo", shortcut: "ddg", categories: ["general"], enabled: true },
+            { name: "wikipedia", shortcut: "wp", categories: ["general"], enabled: true },
+          ],
+        });
+      }
+      searchUrls.push(url.toString());
+      return jsonResponse(searchBody);
+    });
+    await mcp.callTool({ name: "searxng_search", arguments: { q: "bun", engines: ["ddg", "WIKIPEDIA"] } });
+    expect(searchUrls).toHaveLength(1);
+    expect(new URL(searchUrls[0]!).searchParams.get("engines")).toBe("duckduckgo,wikipedia");
+  });
+
+  test("searxng_search errors when all requested engines are unknown", async () => {
+    let searched = false;
+    const mcp = await connect(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/config") {
+        return jsonResponse({
+          categories: ["general"],
+          engines: [{ name: "duckduckgo", shortcut: "ddg", categories: ["general"], enabled: true }],
+        });
+      }
+      searched = true;
+      return jsonResponse(searchBody);
+    });
+    const result = await mcp.callTool({
+      name: "searxng_search",
+      arguments: { q: "bun", engines: ["bogus1", "bogus2"] },
+    });
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain('Unknown engines: "bogus1", "bogus2"');
+    expect(text).toContain("searxng_config");
+    expect(searched).toBe(false);
+  });
+
+  test("searxng_search reports partially unknown engines instead of failing", async () => {
+    const mcp = await connect(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/config") {
+        return jsonResponse({
+          categories: ["general"],
+          engines: [{ name: "duckduckgo", shortcut: "ddg", categories: ["general"], enabled: true }],
+        });
+      }
+      return jsonResponse(searchBody);
+    });
+    const result = await mcp.callTool({
+      name: "searxng_search",
+      arguments: { q: "bun", engines: ["ddg", "ghost-engine"] },
+    });
+    expect((result as { isError?: boolean }).isError).toBeUndefined();
+    const text = textOf(result);
+    expect(text).toContain("https://bun.com/");
+    expect(text).toContain("ignored unknown engines: ghost-engine");
+  });
+
   test("searxng_search applies exclude_domains filtering", async () => {
     const mcp = await connect(async () => jsonResponse(searchBody));
     const result = await mcp.callTool({

@@ -19815,12 +19815,15 @@ function ipv4Fallback(url) {
 }
 var DEFAULT_TIMEOUT_MS = 30000;
 var DEFAULT_USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/searxng-mcp)";
+var ENGINE_CACHE_TTL_MS = 10 * 60000;
 
 class SearXNGClient {
   baseUrl;
   fetchFn;
   timeoutMs;
   userAgent;
+  engineIndex = null;
+  engineIndexFetchedAt = 0;
   constructor(options) {
     const trimmed = options.baseUrl.trim().replace(/\/+$/, "");
     if (!trimmed) {
@@ -19887,6 +19890,49 @@ class SearXNGClient {
       throw new SearXNGError(`Unexpected response from ${this.baseUrl}/config.`, undefined, this.baseUrl);
     }
     return json;
+  }
+  async resolveEngines(requested) {
+    const index = await this.getEngineIndex();
+    if (!index) {
+      return { resolved: [...requested], unknown: [] };
+    }
+    const resolved = [];
+    const unknown = [];
+    for (const raw of requested) {
+      const canonical = index.get(raw.trim().toLowerCase());
+      if (!canonical) {
+        if (!unknown.includes(raw))
+          unknown.push(raw);
+        continue;
+      }
+      if (!resolved.includes(canonical))
+        resolved.push(canonical);
+    }
+    return { resolved, unknown };
+  }
+  async getEngineIndex() {
+    if (this.engineIndex && Date.now() - this.engineIndexFetchedAt < ENGINE_CACHE_TTL_MS) {
+      return this.engineIndex;
+    }
+    let config;
+    try {
+      config = await this.config();
+    } catch {
+      return null;
+    }
+    const index = new Map;
+    for (const engine of config.engines ?? []) {
+      if (!engine?.name)
+        continue;
+      index.set(engine.name.toLowerCase(), engine.name);
+      if (engine.shortcut)
+        index.set(engine.shortcut.toLowerCase(), engine.name);
+    }
+    if (index.size === 0)
+      return null;
+    this.engineIndex = index;
+    this.engineIndexFetchedAt = Date.now();
+    return index;
   }
   async getJson(url) {
     try {
@@ -28206,6 +28252,10 @@ function formatSearchResponse(resp, opts = {}) {
   const total = opts.totalBeforeFilter ?? resp.results.length;
   parts.push(`# Search results${scope}`);
   parts.push(total > resp.results.length ? `${shown} shown of ${resp.results.length} matching results (filtered from ${total})` : `${shown} of ${resp.results.length} results`);
+  if (opts.ignoredEngines?.length) {
+    parts.push("");
+    parts.push(`Note: ignored unknown engines: ${opts.ignoredEngines.join(", ")} — not found on this instance ` + `(call searxng_config for valid names).`);
+  }
   if (resp.answers?.length) {
     parts.push("");
     parts.push("## Answer");
@@ -28349,7 +28399,7 @@ var coreSearchShape = {
   pageno: number2().int().min(1).max(50).optional().describe("Page number of results to fetch (default 1). Use to paginate."),
   time_range: _enum(["day", "week", "month", "year"]).optional().describe("Restrict results to the last day, week, month or year (engines that support it)."),
   safesearch: number2().int().min(0).max(2).optional().describe("SafeSearch level: 0=off, 1=moderate, 2=strict. Default: instance setting."),
-  engines: array(string2().min(1)).optional().describe('Restrict to specific engines by name or shortcut, e.g. ["duckduckgo", "brave"].'),
+  engines: array(string2().min(1)).optional().describe("Restrict to specific engines by name or shortcut, case-insensitive, " + 'e.g. ["duckduckgo", "brave"] or ["ddg"]. Shortcuts are resolved against the instance; ' + "unknown names are rejected (all unknown) or reported in the output (partial)."),
   limit: number2().int().min(1).max(50).optional().describe("Max number of results to return in the output (default 10, max 50)."),
   ...domainFilterShape
 };
@@ -28360,6 +28410,16 @@ function createServer(client, options = {}) {
   });
   const runSearch = async (args, kind) => {
     try {
+      let engines = args.engines;
+      let ignoredEngines = [];
+      if (engines?.length) {
+        const { resolved, unknown } = await client.resolveEngines(engines);
+        if (unknown.length && !resolved.length) {
+          return fail(new SearXNGError(`Unknown engines: ${unknown.map((n) => `"${n}"`).join(", ")} — none exist on this instance. ` + `Call searxng_config to list valid engine names.`));
+        }
+        engines = resolved;
+        ignoredEngines = unknown;
+      }
       const response = await client.search({
         q: args.q,
         categories: args.categories,
@@ -28367,14 +28427,15 @@ function createServer(client, options = {}) {
         pageno: args.pageno,
         timeRange: args.time_range,
         safesearch: args.safesearch,
-        engines: args.engines
+        engines
       });
       const totalBeforeFilter = response.results.length;
       const filtered = filterByDomains(response.results, args.include_domains, args.exclude_domains);
       const text = formatSearchResponse({ ...response, results: filtered }, {
         limit: args.limit,
         kind,
-        totalBeforeFilter: totalBeforeFilter > filtered.length ? totalBeforeFilter : undefined
+        totalBeforeFilter: totalBeforeFilter > filtered.length ? totalBeforeFilter : undefined,
+        ignoredEngines: ignoredEngines.length ? ignoredEngines : undefined
       });
       return ok(text);
     } catch (err) {

@@ -29,7 +29,7 @@ export interface SearchParams {
   timeRange?: TimeRange;
   /** 0 = off, 1 = moderate, 2 = strict. */
   safesearch?: 0 | 1 | 2;
-  /** Restrict to specific engines (names or shortcuts), e.g. ["duckduckgo", "brave"]. */
+  /** Restrict to specific engines (exact names or shortcuts, case-insensitive; resolved against /config). */
   engines?: string[];
 }
 
@@ -39,6 +39,14 @@ export interface SearXNGClientOptions {
   /** Per-request timeout in milliseconds (default 30000). */
   timeoutMs?: number;
   userAgent?: string;
+}
+
+/** Outcome of resolving requested engine names/shortcuts against the instance config. */
+export interface EngineResolution {
+  /** Canonical engine names (shortcuts and casing normalized), deduplicated, in request order. */
+  resolved: string[];
+  /** Requested names that match neither an engine name nor a shortcut. */
+  unknown: string[];
 }
 
 export class SearXNGError extends Error {
@@ -72,12 +80,16 @@ export function ipv4Fallback(url: URL): URL | null {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/searxng-mcp)";
+const ENGINE_CACHE_TTL_MS = 10 * 60_000;
 
 export class SearXNGClient {
   readonly baseUrl: string;
   private readonly fetchFn: FetchFn;
   private readonly timeoutMs: number;
   private readonly userAgent: string;
+  /** name (lowercase) -> canonical name, plus shortcut (lowercase) -> canonical name. */
+  private engineIndex: Map<string, string> | null = null;
+  private engineIndexFetchedAt = 0;
 
   constructor(options: SearXNGClientOptions) {
     const trimmed = options.baseUrl.trim().replace(/\/+$/, "");
@@ -163,6 +175,60 @@ export class SearXNGClient {
       );
     }
     return json as SearXNGConfig;
+  }
+
+  /**
+   * Resolve requested engine identifiers against the instance `/config`.
+   *
+   * SearXNG's `engines` search parameter only accepts exact engine names (case
+   * sensitive); unknown names are silently dropped and an all-unknown list makes
+   * the instance fall back to its default engines. So shortcuts and wrong casing
+   * are normalized here against the instance's engine list (name + shortcut),
+   * cached for ENGINE_CACHE_TTL_MS.
+   *
+   * If `/config` cannot be fetched, the request is passed through unchanged
+   * (resolved = requested, unknown = []) to never block a search.
+   */
+  async resolveEngines(requested: string[]): Promise<EngineResolution> {
+    const index = await this.getEngineIndex();
+    if (!index) {
+      return { resolved: [...requested], unknown: [] };
+    }
+    const resolved: string[] = [];
+    const unknown: string[] = [];
+    for (const raw of requested) {
+      const canonical = index.get(raw.trim().toLowerCase());
+      if (!canonical) {
+        if (!unknown.includes(raw)) unknown.push(raw);
+        continue;
+      }
+      if (!resolved.includes(canonical)) resolved.push(canonical);
+    }
+    return { resolved, unknown };
+  }
+
+  /** Lowercased name/shortcut → canonical engine name. Null when /config is unavailable. */
+  private async getEngineIndex(): Promise<Map<string, string> | null> {
+    if (this.engineIndex && Date.now() - this.engineIndexFetchedAt < ENGINE_CACHE_TTL_MS) {
+      return this.engineIndex;
+    }
+    let config: SearXNGConfig;
+    try {
+      config = await this.config();
+    } catch {
+      // Graceful degradation: no validation rather than a failed search.
+      return null;
+    }
+    const index = new Map<string, string>();
+    for (const engine of config.engines ?? []) {
+      if (!engine?.name) continue;
+      index.set(engine.name.toLowerCase(), engine.name);
+      if (engine.shortcut) index.set(engine.shortcut.toLowerCase(), engine.name);
+    }
+    if (index.size === 0) return null;
+    this.engineIndex = index;
+    this.engineIndexFetchedAt = Date.now();
+    return index;
   }
 
   private async getJson(url: URL): Promise<unknown> {

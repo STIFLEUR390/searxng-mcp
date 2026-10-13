@@ -114,6 +114,8 @@ Notes:
 - `format=json` is always requested; the instance must have it enabled
   (`search.formats: [html, json]`), otherwise SearXNG answers 403 (see §8).
 - `pageno` is only sent when > 1; optional params are omitted to keep instance defaults.
+- `engines` is resolved against `GET /config` first (shortcuts/casing normalized, unknown names
+  rejected or reported — see §6) so the instance never silently falls back to its defaults.
 - The autocompleter returns a tuple `[query, suggestions[], ...]`; flat string arrays are also
   accepted; anything else yields an empty list (never an error).
 
@@ -129,13 +131,24 @@ Common search input (shared by the four search tools):
 | `pageno` | int | 1–50 | 1 |
 | `time_range` | enum | `day` \| `week` \| `month` \| `year` | unset |
 | `safesearch` | int | 0–2 | instance default |
-| `engines` | string[] | engine names/shortcuts | all enabled engines |
+| `engines` | string[] | engine names/shortcuts, case-insensitive | all enabled engines |
 | `limit` | int | 1–50, output-side truncation | 10 |
 | `include_domains` | string[] | host or subdomain match | unset |
 | `exclude_domains` | string[] | host or subdomain match | unset |
 
 All tools are registered with annotations `{ readOnlyHint: true, idempotentHint: true,
 openWorldHint: true }`.
+
+**Engine selection (`engines`)**: SearXNG's `engines` search parameter only accepts *exact*
+engine names — a wrong case, a shortcut or a typo is silently dropped by the instance, which
+falls back to its default engines. The MCP therefore resolves the requested identifiers against
+`GET /config` (name + shortcut maps, lowercased; in-memory cache, 10 min TTL) before searching:
+
+- all requested engines unknown → tool error (`isError: true`) naming them and pointing to
+  `searxng_config`; the search is not executed;
+- some unknown → the valid ones are searched and the output carries a
+  `Note: ignored unknown engines: ...` line under the header;
+- `/config` unreachable or engine-less → graceful pass-through (current behavior, no validation).
 
 ### 6.1 `searxng_search`
 
@@ -296,6 +309,7 @@ and recover. Matrix:
 | Other HTTP errors | `!res.ok` | status + statusText + URL |
 | Invalid JSON body | `res.json()` throws | "returned invalid JSON" + URL |
 | Unexpected response shape | missing `results[]` | missing-field message |
+| All requested `engines` unknown | resolve against `/config` before search | unknown names + "Call searxng_config to list valid engine names" |
 | Extract: invalid/non-http URL | `new URL()` / protocol check | expected URL form |
 | Extract: fetch HTTP error | `!res.ok` | status + bot-protection/JS hint |
 | Extract: unsupported content-type (binary) | header check | actual content-type + supported types (HTML, JSON, plain text) |
@@ -327,15 +341,15 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 ## 10. Testing strategy
 
-Runner: `bun:test`. Suites (106 tests):
+Runner: `bun:test`. Suites (118 tests):
 
 | Suite | Coverage |
 |-------|----------|
 | `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default, `SEARXNG_TIMEOUT_MS` parsing (default/valid/out-of-range) |
-| `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, `time_range=week` + autocomplete `language` forwarding, autocompleter tuple parsing, IPv4 fallback behavior |
-| `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers (string AND object forms — no `[object Object]`)/infoboxes/corrections/suggestions/unresponsive engines, config grouping + compact `includeEngines: false` mode |
+| `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, `time_range=week` + autocomplete `language` forwarding, autocompleter tuple parsing, IPv4 fallback behavior, `resolveEngines` (shortcut/case resolution, unknown reporting, dedup, `/config` caching, pass-through when `/config` fails or has no engines) |
+| `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers (string AND object forms — no `[object Object]`)/infoboxes/corrections/suggestions/unresponsive engines, ignored-unknown-engines note, config grouping + compact `includeEngines: false` mode |
 | `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), `start_char` windowing, `headings_only` outline, truncation, fetch guards (URL/protocol/HTTP/content-type/size) incl. JSON/text fenced rendering and binary refusal |
-| `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding (incl. `time_range=week`), domain filtering, category pinning, error propagation (`isError`), config/autocomplete (`language`)/extract (`start_char`, `headings_only`) tools |
+| `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding (incl. `time_range=week`), engine resolution (shortcut → name), all-unknown-engines error, partially-unknown-engines note, domain filtering, category pinning, error propagation (`isError`), config/autocomplete (`language`)/extract (`start_char`, `headings_only`) tools |
 | `test/version.test.ts` | `VERSION` ↔ `package.json` consistency (the published `--version` must equal the npm version; enforced by the `version` lifecycle script + this guard) |
 
 All HTTP I/O is injectable (`FetchFn`), so tests are hermetic; a manual smoke test against a

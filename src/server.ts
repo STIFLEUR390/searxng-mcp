@@ -93,7 +93,11 @@ const coreSearchShape = {
   engines: z
     .array(z.string().min(1))
     .optional()
-    .describe('Restrict to specific engines by name or shortcut, e.g. ["duckduckgo", "brave"].'),
+    .describe(
+      'Restrict to specific engines by name or shortcut, case-insensitive, ' +
+        'e.g. ["duckduckgo", "brave"] or ["ddg"]. Shortcuts are resolved against the instance; ' +
+        "unknown names are rejected (all unknown) or reported in the output (partial).",
+    ),
   limit: z
     .number()
     .int()
@@ -123,6 +127,21 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
     kind: ResultKind,
   ): Promise<ToolResult> => {
     try {
+      let engines = args.engines;
+      let ignoredEngines: string[] = [];
+      if (engines?.length) {
+        const { resolved, unknown } = await client.resolveEngines(engines);
+        if (unknown.length && !resolved.length) {
+          return fail(
+            new SearXNGError(
+              `Unknown engines: ${unknown.map((n) => `"${n}"`).join(", ")} — none exist on this instance. ` +
+                `Call searxng_config to list valid engine names.`,
+            ),
+          );
+        }
+        engines = resolved;
+        ignoredEngines = unknown;
+      }
       const response: SearXNGSearchResponse = await client.search({
         q: args.q,
         categories: args.categories,
@@ -130,7 +149,7 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
         pageno: args.pageno,
         timeRange: args.time_range,
         safesearch: args.safesearch as 0 | 1 | 2 | undefined,
-        engines: args.engines,
+        engines,
       });
       const totalBeforeFilter = response.results.length;
       const filtered = filterByDomains(response.results, args.include_domains, args.exclude_domains);
@@ -140,6 +159,7 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
           limit: args.limit,
           kind,
           totalBeforeFilter: totalBeforeFilter > filtered.length ? totalBeforeFilter : undefined,
+          ignoredEngines: ignoredEngines.length ? ignoredEngines : undefined,
         },
       );
       return ok(text);

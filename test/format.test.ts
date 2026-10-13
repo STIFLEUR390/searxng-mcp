@@ -109,6 +109,18 @@ describe("formatSearchResponse", () => {
     expect(text).toContain("brave (too many requests)");
   });
 
+  test("reports ignored unknown engines near the top", () => {
+    const text = formatSearchResponse(makeResponse(), { ignoredEngines: ["ghost-engine", "nope"] });
+    expect(text).toContain("ignored unknown engines: ghost-engine, nope");
+    // The note sits before the results section.
+    expect(text.indexOf("ignored unknown engines")).toBeLessThan(text.indexOf("## Results"));
+  });
+
+  test("omits the ignored-engines note when there is none", () => {
+    const text = formatSearchResponse(makeResponse());
+    expect(text).not.toContain("ignored unknown engines");
+  });
+
   test("renders object-form answers from current SearXNG without [object Object]", () => {
     const text = formatSearchResponse(
       makeResponse({
