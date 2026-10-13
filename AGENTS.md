@@ -7,8 +7,14 @@ Status: implemented. `index.ts` boots a stdio MCP server exposing 7 tools
 (`searxng_search`, `searxng_search_news`, `searxng_search_images`,
 `searxng_search_videos`, `searxng_autocomplete`, `searxng_config`,
 `searxng_extract_content`). Configured via `SEARXNG_URL` env var or `--url`
-flag (default `http://localhost:8888`). `dist/index.js` is a committed bundle
-used by the `bin` entry for global installs.
+flag (default `http://localhost:8888`); `SEARXNG_TIMEOUT_MS` tunes the
+per-request timeout (default 30000). `dist/index.js` is a committed bundle
+used by the `bin` entry for global installs — it must be rebuilt (`bun run
+build`) when `index.ts` or `src/` changes.
+
+Other instruction sources: `CLAUDE.md` (Bun-only conventions: prefer Bun
+built-ins, never Node/Express equivalents) and `SPEC.md` (the spec of record
+for tool behavior and output formats).
 
 ## Runtime & commands
 
@@ -36,6 +42,14 @@ unless asked.
   `noImplicitOverride`; `verbatimModuleSyntax` + `moduleResolution: bundler`, so
   use `import type` for type-only imports and `.ts` extensions in imports are allowed.
 - ESM (`"type": "module"`).
+- stdout is reserved for the MCP protocol — log to stderr only (`console.error`).
+- Tests inject `fetchFn` into `SearXNGClient` instead of mocking global `fetch`
+  (see `test/client.test.ts`); no network in tests.
+- `test/version.test.ts` asserts `src/version.ts` matches `package.json`. Never
+  bump the version by hand — `npm version patch` runs `scripts/sync-version.mjs`,
+  rebuilds `dist/`, commits and tags.
+- `dist/` is intentionally committed (global install from GitHub without a build);
+  never add it to `.gitignore`.
 
 ## Gotchas
 
