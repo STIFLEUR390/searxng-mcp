@@ -8,7 +8,8 @@ Status: implemented. `index.ts` boots a stdio MCP server exposing 7 tools
 `searxng_search_videos`, `searxng_autocomplete`, `searxng_config`,
 `searxng_extract_content`). Configured via `SEARXNG_URL` env var or `--url`
 flag (default `http://localhost:8888`); `SEARXNG_TIMEOUT_MS` tunes the
-per-request timeout (default 30000). `dist/index.js` is a committed bundle
+per-request timeout (default 30000); `SEARXNG_BROWSER_URL` (alias `OBSCURA_URL`)
+optionally points extraction at a CDP browser (Obscura, Chrome). `dist/index.js` is a committed bundle
 used by the `bin` entry for global installs — it must be rebuilt (`bun run
 build`) when `index.ts` or `src/` changes.
 
@@ -31,7 +32,7 @@ Bun only — no Node/npm/yarn/pnpm (`bun.lock` is the only lockfile).
 bun install          # install deps
 bun run dev          # run the entrypoint from source
 bun run index.ts     # same (no devDependencies required at runtime)
-bun test             # 118 tests, bun:test, offline (no network)
+bun test             # 127 tests, bun:test, offline (no network)
 bun run typecheck    # bunx tsc --noEmit
 bun run build        # bundle to dist/index.js (node target) — required after any src/index.ts edit
 npm version patch    # syncs src/version.ts (scripts/sync-version.mjs), rebuilds dist/, commits + tags
@@ -68,8 +69,14 @@ unless asked.
   Preserve that path when touching search params.
 - `index.ts`/`src/` are the only sources; `dist/index.js` is generated but committed.
 - HTML extraction is `linkedom` + `@mozilla/readability` + `turndown` (clipper.js stack, no
-  jsdom/browser). `tsconfig.json` therefore includes the `DOM` lib. `cleanDom` intentionally
+  jsdom). `tsconfig.json` therefore includes the `DOM` lib. `cleanDom` intentionally
   skips dropping an element that holds >60% of the page's text — Tailwind class strings like
   `--banner-height` otherwise match section tokens and nuke the article.
+- Browser rendering is opt-in and must stay out of the bundle: `puppeteer-core` is an
+  `optionalDependencies` entry loaded by `await import("puppeteer-core")`, and the build script
+  passes `--external puppeteer-core`. Drop that flag and dist jumps by several MB.
+  The renderer is `page.goto(waitUntil: "load")` + best-effort `waitForNetworkIdle` — puppeteer's
+  `networkidle2` hangs against Obscura. Tests inject `renderHtml`/`browserUrl` into `FetchDeps`
+  instead of touching a browser.
 - No `.env` handling beyond Bun's automatic loading — never add `dotenv`.
 - Don't add frameworks (express, vite, jest): `CLAUDE.md` explicitly rules them out.

@@ -114,6 +114,8 @@ interface ServerOptions {
   /** Fetch implementation override (tests). */
   fetchFn?: FetchFn;
   version?: string;
+  /** CDP browser endpoint used to render pages during extraction. */
+  browserUrl?: string;
 }
 
 export function createServer(client: SearXNGClient, options: ServerOptions = {}): McpServer {
@@ -372,7 +374,7 @@ export function createServer(client: SearXNGClient, options: ServerOptions = {})
             startChar: args.start_char,
             headingsOnly: args.headings_only,
           },
-          { fetchFn: options.fetchFn },
+          { fetchFn: options.fetchFn, browserUrl: options.browserUrl },
         );
         const parts: string[] = [];
         parts.push(`# ${result.title || "(no title)"}`);

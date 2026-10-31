@@ -37442,6 +37442,8 @@ var ENV_TIMEOUT_MS = "SEARXNG_TIMEOUT_MS";
 var DEFAULT_TIMEOUT_MS2 = 30000;
 var MIN_TIMEOUT_MS = 500;
 var MAX_TIMEOUT_MS = 300000;
+var ENV_BROWSER_URL = "SEARXNG_BROWSER_URL";
+var ENV_BROWSER_URL_ALIAS = "OBSCURA_URL";
 
 class ConfigError extends Error {
   name = "ConfigError";
@@ -37464,6 +37466,10 @@ Configuration:
 
   ${ENV_TIMEOUT_MS} sets the per-request timeout in milliseconds
   (default ${DEFAULT_TIMEOUT_MS2}, min ${MIN_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}).
+
+  ${ENV_BROWSER_URL} (or ${ENV_BROWSER_URL_ALIAS}) points at a CDP browser
+  such as Obscura, e.g. ws://127.0.0.1:9222. Page extraction then runs on the
+  rendered DOM (JavaScript-heavy sites). Optional: needs puppeteer-core.
 
 Examples:
   searxng-mcp --url http://localhost:8888
@@ -37524,6 +37530,15 @@ function resolveBaseUrl(argv, env = process.env) {
   const fromCli = parseArgs(argv).baseUrl;
   const raw = fromCli ?? env[ENV_URL] ?? DEFAULT_BASE_URL;
   return normalizeBaseUrl(raw);
+}
+function resolveBrowserUrl(env = process.env) {
+  const raw = env[ENV_BROWSER_URL]?.trim() || env[ENV_BROWSER_URL_ALIAS]?.trim();
+  if (!raw)
+    return;
+  if (!/^(wss?|https?):\/\//i.test(raw)) {
+    throw new ConfigError(`Invalid ${ENV_BROWSER_URL}: "${raw}". Expected a ws://, wss://, http:// or https:// browser endpoint.`);
+  }
+  return raw;
 }
 function resolveTimeoutMs(env = process.env) {
   const raw = env[ENV_TIMEOUT_MS];
@@ -54942,6 +54957,48 @@ function renderPlainBody(body, url, opts, kind) {
     startChar
   };
 }
+function browserConnectOptions(endpoint) {
+  const url = endpoint.trim();
+  if (/^wss?:\/\//i.test(url))
+    return { browserWSEndpoint: url };
+  if (/^https?:\/\//i.test(url))
+    return { browserURL: url };
+  throw new ExtractError(`Invalid browser URL "${endpoint}". Use ws://host:port (CDP) or http://host:port.`);
+}
+function describeError(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+async function renderWithBrowser(url, endpoint, timeoutMs, maxBytes) {
+  const connectOptions = browserConnectOptions(endpoint);
+  let puppeteer;
+  try {
+    puppeteer = await import("puppeteer-core");
+  } catch {
+    throw new ExtractError(`Browser rendering is configured (${endpoint}) but "puppeteer-core" is not installed. Install it (bun add puppeteer-core) or unset the browser URL.`);
+  }
+  let browser;
+  try {
+    browser = await puppeteer.connect(connectOptions);
+  } catch (err) {
+    throw new ExtractError(`Could not connect to the browser at ${endpoint}: ${describeError(err)}`);
+  }
+  try {
+    const page = await browser.newPage();
+    try {
+      await page.goto(url, { waitUntil: "load", timeout: timeoutMs });
+      await page.waitForNetworkIdle({ idleTime: 300, timeout: Math.min(timeoutMs, 5000) }).catch(() => {});
+    } catch (err) {
+      throw new ExtractError(`Rendering ${url} in the browser failed: ${describeError(err)}`);
+    }
+    const html = await page.content();
+    if (html.length > maxBytes) {
+      throw new ExtractError(`Refusing to extract from ${url}: rendered HTML exceeds the ${maxBytes} byte limit.`);
+    }
+    return html;
+  } finally {
+    await browser.disconnect().catch(() => {});
+  }
+}
 async function fetchAndExtract(url, opts = {}, deps = {}) {
   let parsed;
   try {
@@ -54955,6 +55012,11 @@ async function fetchAndExtract(url, opts = {}, deps = {}) {
   const fetchFn = deps.fetchFn ?? fetch;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS3;
   const maxBytes = deps.maxHtmlBytes ?? DEFAULT_MAX_HTML_BYTES;
+  const browserUrl = deps.browserUrl?.trim() || undefined;
+  const viaBrowser = browserUrl ? async () => {
+    const html = deps.renderHtml ? await deps.renderHtml(url) : await renderWithBrowser(url, browserUrl, timeoutMs, maxBytes);
+    return extractFromHtml(html, url, opts);
+  } : null;
   const targets = [parsed, ipv4Fallback(parsed)].filter((u) => u !== null);
   let res = null;
   let lastNetworkError = null;
@@ -54981,13 +55043,19 @@ async function fetchAndExtract(url, opts = {}, deps = {}) {
     }
   }
   if (!res) {
+    if (viaBrowser)
+      return viaBrowser();
     const message = lastNetworkError instanceof Error ? lastNetworkError.message : String(lastNetworkError);
     throw new ExtractError(`Could not fetch ${url}: ${message}`);
   }
   if (!res.ok) {
-    throw new ExtractError(`Fetching ${url} failed: HTTP ${res.status} ${res.statusText}. ` + `The page may block bots, require JavaScript, or be behind authentication.`);
+    if (viaBrowser)
+      return viaBrowser();
+    throw new ExtractError(`Fetching ${url} failed: HTTP ${res.status} ${res.statusText}. The page may block bots, require JavaScript, or be behind authentication.`);
   }
   const contentType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+  if (viaBrowser && (!contentType || /html|xml/.test(contentType)))
+    return viaBrowser();
   const contentLength = Number(res.headers.get("content-length") ?? 0);
   if (contentLength > maxBytes) {
     throw new ExtractError(`Refusing to extract from ${url}: content-length ${contentLength} exceeds the ${maxBytes} byte limit.`);
@@ -55003,7 +55071,7 @@ async function fetchAndExtract(url, opts = {}, deps = {}) {
     if (contentType.startsWith("text/")) {
       return renderPlainBody(body, url, opts, "text");
     }
-    throw new ExtractError(`Refusing to extract from ${url}: content-type "${contentType}" is not supported. ` + `HTML, JSON and plain-text bodies are supported; binary files (PDF, images, archives) are not.`);
+    throw new ExtractError(`Refusing to extract from ${url}: content-type "${contentType}" is not supported. HTML, JSON and plain-text bodies are supported; binary files (PDF, images, archives) are not.`);
   }
   return extractFromHtml(body, url, opts);
 }
@@ -55379,7 +55447,7 @@ function createServer(client, options = {}) {
         maxLength: args.max_length,
         startChar: args.start_char,
         headingsOnly: args.headings_only
-      }, { fetchFn: options.fetchFn });
+      }, { fetchFn: options.fetchFn, browserUrl: options.browserUrl });
       const parts = [];
       parts.push(`# ${result.title || "(no title)"}`);
       parts.push(`URL: ${result.url}`);
@@ -55439,9 +55507,16 @@ async function main() {
     process.exit(2);
   }
   const client = new SearXNGClient({ baseUrl, timeoutMs });
-  const server = createServer(client, { version: VERSION });
+  let browserUrl;
+  try {
+    browserUrl = resolveBrowserUrl(process.env);
+  } catch (err) {
+    console.error(`searxng-mcp: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+  const server = createServer(client, { version: VERSION, browserUrl });
   const source = parsed.baseUrl ? "--url flag" : process.env[ENV_URL] ? `${ENV_URL} env var` : `default (${DEFAULT_BASE_URL})`;
-  console.error(`[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})` + (timeoutMs !== DEFAULT_TIMEOUT_MS2 ? `, timeout ${timeoutMs}ms` : ""));
+  console.error(`[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})` + (timeoutMs !== DEFAULT_TIMEOUT_MS2 ? `, timeout ${timeoutMs}ms` : "") + (browserUrl ? `, browser: ${browserUrl}` : ""));
   const transport = new StdioServerTransport;
   await server.connect(transport);
   console.error("[searxng-mcp] ready — waiting for MCP requests on stdio");

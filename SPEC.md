@@ -69,7 +69,8 @@ flowchart LR
 
 Dependencies: `@modelcontextprotocol/sdk`, `zod` (v4, aligned with the SDK), `linkedom`
 (lightweight DOM), `@mozilla/readability` and `turndown` (the clipper.js HTML→Markdown stack).
-No HTTP framework, no jsdom, no headless browser.
+Optional: `puppeteer-core`, loaded on demand when `SEARXNG_BROWSER_URL` points at a CDP
+browser. No HTTP framework, no jsdom, no bundled browser.
 
 ## 4. Configuration
 
@@ -85,6 +86,10 @@ Normalization rules (`normalizeBaseUrl`):
 - must parse as an absolute URL with `http:`/`https:` protocol (else fatal config error);
 - trailing slashes stripped; a trailing `/search` (pasted search URL) stripped;
 - sub-paths preserved (`https://host/searxng` stays).
+
+`SEARXNG_BROWSER_URL` (alias `OBSCURA_URL`) is optional: it must be a `ws://`, `wss://`,
+`http://` or `https://` endpoint (else fatal config error) and only affects
+`searxng_extract_content` rendering.
 
 IPv4 fallback: Node resolves `localhost` to `::1` first while many instances listen on IPv4
 only. On a **network-level** failure (not HTTP errors, not timeouts), the client retries once
@@ -234,7 +239,8 @@ Content: <n> chars extracted[ — truncated to <m>]
 Behavioral guarantees:
 
 - fetch guards: absolute http(s) only; HTTP errors surfaced with status; bodies > 5 MiB refused;
-  30 s timeout by default (`SEARXNG_TIMEOUT_MS`); IPv4 fallback for `localhost`.
+  30 s timeout by default (`SEARXNG_TIMEOUT_MS`); IPv4 fallback for `localhost`; with a browser
+  configured, HTTP errors fall back to the rendered page and rendered HTML > 5 MiB is refused.
 - content types: HTML (and XHTML/XML) go through the filtering pipeline; JSON bodies are returned
   pretty-printed in a fenced ```json block (raw fenced body when parsing fails); other `text/*`
   bodies are returned as fenced text; binary content types (PDF, images, archives, octet-stream)
@@ -250,6 +256,16 @@ Behavioral guarantees:
 
 Implemented in `src/extract.ts` on top of `linkedom` (DOM), `@mozilla/readability` (main-content
 selection) and `turndown` (HTML → Markdown) — the same stack the clipper.js CLI uses.
+
+**Rendered pages (optional).** With `SEARXNG_BROWSER_URL` (alias `OBSCURA_URL`) set, an HTML
+page is still fetched once with the plain HTTP request (to learn its content type) and then
+re-fetched as a rendered DOM through that CDP browser: lazy `import("puppeteer-core")`,
+`page.goto(url, { waitUntil: "load" })`, a best-effort `waitForNetworkIdle` (5 s cap, ignored on
+timeout), then `page.content()` into the pipeline below. The browser is also tried when the
+plain fetch fails (network error or non-2xx, e.g. bot walls). JSON, `text/*` and binary bodies
+never use it. `ws://`/`wss://` endpoints connect as a CDP socket, `http://`/`https://` through
+the devtools HTTP endpoint. Without `puppeteer-core` installed the tool returns an explicit
+error telling the user to install it or unset the variable.
 
 ### 7.1 Removal tiers
 
@@ -325,8 +341,9 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 - `bin`: `searxng-mcp` → `dist/index.js` (bundled, `#!/usr/bin/env node`, executable bit set,
   `--target=node` so Node >= 18 runs it; `bun dist/index.js` also works).
-- Build: `bun build ./index.ts --target=node --outdir=dist` — single self-contained file
-  (SDK + zod + linkedom + Readability + Turndown bundled, ~1.8 MB).
+- Build: `bun build ./index.ts --target=node --outdir=dist --external puppeteer-core` — single
+  self-contained file (SDK + zod + linkedom + Readability + Turndown bundled, ~1.8 MB).
+  `puppeteer-core` stays external (optional dependency) so the bundle carries no browser client.
 - `dist/` is **committed** so installs from GitHub work without a build step. Validated flows:
   `bun install -g github:...` (binary on PATH, MCP handshake OK),
   `npm pack github:... && npm install -g <tgz>` (direct `npm install -g github:...` is broken
@@ -342,14 +359,14 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 
 ## 10. Testing strategy
 
-Runner: `bun:test`. Suites (118 tests):
+Runner: `bun:test`. Suites (127 tests):
 
 | Suite | Coverage |
 |-------|----------|
-| `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default, `SEARXNG_TIMEOUT_MS` parsing (default/valid/out-of-range) |
+| `test/config.test.ts` | URL normalization (slashes, `/search`, protocols), CLI parsing, precedence CLI > env > default, `SEARXNG_TIMEOUT_MS` parsing (default/valid/out-of-range), `SEARXNG_BROWSER_URL`/`OBSCURA_URL` precedence and scheme validation |
 | `test/client.test.ts` | Query-string construction, param omission, empty-query rejection, 403/429/network/invalid-JSON messages, `time_range=week` + autocomplete `language` forwarding, autocompleter tuple parsing, IPv4 fallback behavior, `resolveEngines` (shortcut/case resolution, unknown reporting, dedup, `/config` caching, pass-through when `/config` fails or has no engines) |
 | `test/format.test.ts` | Truncation, domain matching (subdomains, protocol-prefixed patterns), result rendering per kind, limit/overflow notes, answers (string AND object forms — no `[object Object]`)/infoboxes/corrections/suggestions/unresponsive engines, ignored-unknown-engines note, config grouping + compact `includeEngines: false` mode |
-| `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), `start_char` windowing, `headings_only` outline, truncation, fetch guards (URL/protocol/HTTP/content-type/size) incl. JSON/text fenced rendering and binary refusal |
+| `test/extract.test.ts` | Metadata capture, default chrome/noise removal + reporting, `include_*` re-inclusion (including sections outside the content scope), `<pre>` entity preservation + real-tag stripping, content-root detection, link/image modes, selector success/failure (no append in selector mode), `start_char` windowing, `headings_only` outline, truncation, fetch guards (URL/protocol/HTTP/content-type/size) incl. JSON/text fenced rendering and binary refusal, browser rendering (`browserConnectOptions` endpoint mapping, render path, bot-wall fallback, JSON stays on plain fetch) |
 | `test/server.test.ts` | End-to-end MCP via `InMemoryTransport` + SDK `Client`: tool listing, search call + parameter forwarding (incl. `time_range=week`), engine resolution (shortcut → name), all-unknown-engines error, partially-unknown-engines note, domain filtering, category pinning, error propagation (`isError`), config/autocomplete (`language`)/extract (`start_char`, `headings_only`) tools |
 | `test/version.test.ts` | `VERSION` ↔ `package.json` consistency (the published `--version` must equal the npm version; enforced by the `version` lifecycle script + this guard) |
 

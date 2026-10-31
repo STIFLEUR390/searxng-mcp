@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { ExtractError, extractFromHtml, fetchAndExtract } from "../src/extract.ts";
+import { ExtractError, browserConnectOptions, extractFromHtml, fetchAndExtract } from "../src/extract.ts";
 import type { FetchFn } from "../src/client.ts";
 
 const PAGE = `<!doctype html>
@@ -288,5 +288,85 @@ describe("fetchAndExtract", () => {
         maxHtmlBytes: 10,
       }),
     ).rejects.toThrow(/byte limit/);
+  });
+});
+
+describe("browserConnectOptions", () => {
+  test("ws:// and wss:// become a CDP socket endpoint", () => {
+    expect(browserConnectOptions("ws://127.0.0.1:9222")).toEqual({ browserWSEndpoint: "ws://127.0.0.1:9222" });
+    expect(browserConnectOptions(" wss://browser.example.org ")).toEqual({
+      browserWSEndpoint: "wss://browser.example.org",
+    });
+  });
+
+  test("http:// and https:// become a devtools HTTP URL", () => {
+    expect(browserConnectOptions("http://127.0.0.1:9222")).toEqual({ browserURL: "http://127.0.0.1:9222" });
+    expect(browserConnectOptions("https://browser.example.org")).toEqual({
+      browserURL: "https://browser.example.org",
+    });
+  });
+
+  test("rejects other schemes", () => {
+    expect(() => browserConnectOptions("127.0.0.1:9222")).toThrow(/Invalid browser URL/);
+  });
+});
+
+describe("fetchAndExtract with a browser", () => {
+  const shell = "<html><head><title>Shell</title></head><body><div id=app></div></body></html>";
+  const rendered =
+    "<html><head><title>Rendered</title></head><body><article><p>Rendered content</p></article></body></html>";
+
+  function mockFetch(body: string, status = 200): FetchFn {
+    return async () =>
+      new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+
+  test("renders HTML through the browser before extracting", async () => {
+    let renderCalls = 0;
+    const result = await fetchAndExtract(
+      "https://app.example.org/dashboard",
+      {},
+      {
+        fetchFn: mockFetch(shell),
+        browserUrl: "ws://127.0.0.1:9222",
+        renderHtml: async () => {
+          renderCalls++;
+          return rendered;
+        },
+      },
+    );
+    expect(renderCalls).toBe(1);
+    expect(result.title).toBe("Rendered");
+    expect(result.content).toContain("Rendered content");
+  });
+
+  test("falls back to the browser when the plain fetch is blocked", async () => {
+    const result = await fetchAndExtract(
+      "https://app.example.org/dashboard",
+      {},
+      {
+        fetchFn: mockFetch("Forbidden", 403),
+        browserUrl: "ws://127.0.0.1:9222",
+        renderHtml: async () => rendered,
+      },
+    );
+    expect(result.content).toContain("Rendered content");
+  });
+
+  test("leaves JSON and text bodies on the plain fetch path", async () => {
+    const renderHtml = async (): Promise<string> => {
+      throw new Error("browser must not be used");
+    };
+    const json = await fetchAndExtract(
+      "https://example.org/api",
+      {},
+      {
+        fetchFn: async () =>
+          new Response('{"a":1}', { headers: { "Content-Type": "application/json" } }),
+        browserUrl: "ws://127.0.0.1:9222",
+        renderHtml,
+      },
+    );
+    expect(json.content).toContain('"a": 1');
   });
 });

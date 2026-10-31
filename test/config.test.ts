@@ -4,10 +4,13 @@ import {
   ConfigError,
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
+  ENV_BROWSER_URL,
+  ENV_BROWSER_URL_ALIAS,
   ENV_TIMEOUT_MS,
   normalizeBaseUrl,
   parseArgs,
   resolveBaseUrl,
+  resolveBrowserUrl,
   resolveTimeoutMs,
 } from "../src/config.ts";
 
@@ -99,6 +102,27 @@ describe("resolveBaseUrl", () => {
   test("default used when nothing set", () => {
     expect(resolveBaseUrl([], {})).toBe(DEFAULT_BASE_URL);
     expect(DEFAULT_BASE_URL).toBe("http://localhost:8888");
+  });
+});
+
+describe("resolveBrowserUrl", () => {
+  test("is undefined when unset or empty", () => {
+    expect(resolveBrowserUrl({})).toBeUndefined();
+    expect(resolveBrowserUrl({ [ENV_BROWSER_URL]: "  " })).toBeUndefined();
+  });
+
+  test("reads SEARXNG_BROWSER_URL, then the OBSCURA_URL alias", () => {
+    expect(resolveBrowserUrl({ [ENV_BROWSER_URL]: "ws://127.0.0.1:9222" })).toBe("ws://127.0.0.1:9222");
+    expect(resolveBrowserUrl({ [ENV_BROWSER_URL_ALIAS]: "http://127.0.0.1:9222" })).toBe(
+      "http://127.0.0.1:9222",
+    );
+    expect(
+      resolveBrowserUrl({ [ENV_BROWSER_URL]: "ws://a:1", [ENV_BROWSER_URL_ALIAS]: "ws://b:2" }),
+    ).toBe("ws://a:1");
+  });
+
+  test("rejects endpoints without a supported scheme", () => {
+    expect(() => resolveBrowserUrl({ [ENV_BROWSER_URL]: "127.0.0.1:9222" })).toThrow(ConfigError);
   });
 });
 

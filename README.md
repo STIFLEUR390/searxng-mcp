@@ -127,6 +127,7 @@ Environment variables:
 |----------|---------|-------------|
 | `SEARXNG_URL` | `http://localhost:8888` | Base URL of the SearXNG instance (see precedence above) |
 | `SEARXNG_TIMEOUT_MS` | `30000` | Per-request timeout in ms (min 500, max 300000) — raise it for slow instances |
+| `SEARXNG_BROWSER_URL` | — | Optional CDP browser endpoint (`ws://127.0.0.1:9222` for Obscura, or `http://…`) used to render HTML pages; alias `OBSCURA_URL` |
 
 CLI flags: `--help`, `--version`.
 
@@ -198,7 +199,8 @@ what the instance can search before picking categories/engines.
 
 Fetches a page (typically a URL found with the search tools) and returns the article as clean
 Markdown. Main-content detection uses Mozilla Readability and rendering uses Turndown — the
-same stack as the [clipper.js](https://github.com/philschmid/clipper.js) CLI, minus the browser.
+same stack as the [clipper.js](https://github.com/philschmid/clipper.js) CLI, with an optional
+CDP browser for JavaScript-rendered pages (see below).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -219,6 +221,14 @@ same stack as the [clipper.js](https://github.com/philschmid/clipper.js) CLI, mi
 HTML pages go through the structural filtering described below. JSON bodies are returned
 pretty-printed in a fenced ```json block, other `text/*` bodies as fenced text; binary files
 (PDF, images, archives) are refused with an explicit error.
+
+**JavaScript-rendered pages.** Set `SEARXNG_BROWSER_URL` to a CDP browser endpoint and HTML
+pages are fetched as a rendered DOM instead. Works with [Obscura](https://docs.obscura.sh)
+(`obscura serve --port 9222` → `SEARXNG_BROWSER_URL=ws://127.0.0.1:9222`), or any Chrome
+started with `--remote-debugging-port`. `ws://`/`wss://` endpoints connect directly, `http://`
+endpoints go through `/json/version`. Rendering needs the optional `puppeteer-core` package;
+without it, extraction stays on the plain HTTP fetch. The browser is also tried when the plain
+fetch fails with an HTTP error (bot walls). JSON and plain-text bodies never use it.
 
 Always removed regardless of options: `script`, `style`, `noscript`, `iframe`, forms, and noise
 banners (cookies, consent, popups, ads, newsletter boxes). The response reports which sections

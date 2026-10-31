@@ -16,6 +16,7 @@ import {
   HELP_TEXT,
   parseArgs,
   resolveBaseUrl,
+  resolveBrowserUrl,
   resolveTimeoutMs,
 } from "./src/config.ts";
 import { createServer } from "./src/server.ts";
@@ -59,7 +60,16 @@ async function main(): Promise<void> {
   }
 
   const client = new SearXNGClient({ baseUrl, timeoutMs });
-  const server = createServer(client, { version: VERSION });
+
+  let browserUrl: string | undefined;
+  try {
+    browserUrl = resolveBrowserUrl(process.env);
+  } catch (err) {
+    console.error(`searxng-mcp: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+
+  const server = createServer(client, { version: VERSION, browserUrl });
 
   // stdout is reserved for the MCP protocol: log to stderr only.
   const source = parsed.baseUrl
@@ -69,7 +79,8 @@ async function main(): Promise<void> {
       : `default (${DEFAULT_BASE_URL})`;
   console.error(
     `[searxng-mcp] v${VERSION} — SearXNG: ${baseUrl} (from ${source})` +
-      (timeoutMs !== DEFAULT_TIMEOUT_MS ? `, timeout ${timeoutMs}ms` : ""),
+      (timeoutMs !== DEFAULT_TIMEOUT_MS ? `, timeout ${timeoutMs}ms` : "") +
+      (browserUrl ? `, browser: ${browserUrl}` : ""),
   );
 
   const transport = new StdioServerTransport();

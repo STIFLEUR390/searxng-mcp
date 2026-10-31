@@ -6,6 +6,8 @@ export const ENV_TIMEOUT_MS = "SEARXNG_TIMEOUT_MS";
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const MIN_TIMEOUT_MS = 500;
 export const MAX_TIMEOUT_MS = 300_000;
+export const ENV_BROWSER_URL = "SEARXNG_BROWSER_URL";
+export const ENV_BROWSER_URL_ALIAS = "OBSCURA_URL";
 
 export class ConfigError extends Error {
   override name = "ConfigError";
@@ -36,6 +38,10 @@ Configuration:
 
   ${ENV_TIMEOUT_MS} sets the per-request timeout in milliseconds
   (default ${DEFAULT_TIMEOUT_MS}, min ${MIN_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}).
+
+  ${ENV_BROWSER_URL} (or ${ENV_BROWSER_URL_ALIAS}) points at a CDP browser
+  such as Obscura, e.g. ws://127.0.0.1:9222. Page extraction then runs on the
+  rendered DOM (JavaScript-heavy sites). Optional: needs puppeteer-core.
 
 Examples:
   searxng-mcp --url http://localhost:8888
@@ -114,6 +120,23 @@ export function resolveBaseUrl(
   const fromCli = parseArgs(argv).baseUrl;
   const raw = fromCli ?? env[ENV_URL] ?? DEFAULT_BASE_URL;
   return normalizeBaseUrl(raw);
+}
+
+/**
+ * Resolve the optional browser endpoint used to render pages for extraction.
+ * SEARXNG_BROWSER_URL wins, then the Obscura alias OBSCURA_URL. Unset → no browser.
+ */
+export function resolveBrowserUrl(
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const raw = env[ENV_BROWSER_URL]?.trim() || env[ENV_BROWSER_URL_ALIAS]?.trim();
+  if (!raw) return undefined;
+  if (!/^(wss?|https?):\/\//i.test(raw)) {
+    throw new ConfigError(
+      `Invalid ${ENV_BROWSER_URL}: "${raw}". Expected a ws://, wss://, http:// or https:// browser endpoint.`,
+    );
+  }
+  return raw;
 }
 
 /**

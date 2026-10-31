@@ -71,6 +71,10 @@ export interface FetchDeps {
   userAgent?: string;
   /** Reject HTML bodies larger than this (default 5 MiB). */
   maxHtmlBytes?: number;
+  /** Remote CDP browser endpoint (ws:// or http://) used to render HTML pages. */
+  browserUrl?: string;
+  /** Renderer override (tests); used instead of the CDP browser when browserUrl is set. */
+  renderHtml?: (url: string) => Promise<string>;
 }
 
 const DEFAULT_MAX_LENGTH = 20_000;
@@ -517,6 +521,55 @@ function renderPlainBody(body: string, url: string, opts: ExtractOptions, kind: 
   };
 }
 
+/** Connection options for a remote browser endpoint (ws:// = CDP socket, http:// = devtools HTTP). */
+export function browserConnectOptions(endpoint: string): { browserWSEndpoint: string } | { browserURL: string } {
+  const url = endpoint.trim();
+  if (/^wss?:\/\//i.test(url)) return { browserWSEndpoint: url };
+  if (/^https?:\/\//i.test(url)) return { browserURL: url };
+  throw new ExtractError(`Invalid browser URL "${endpoint}". Use ws://host:port (CDP) or http://host:port.`);
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Render a page in a remote CDP browser (Obscura, Chrome --remote-debugging-port) and return its HTML. */
+async function renderWithBrowser(url: string, endpoint: string, timeoutMs: number, maxBytes: number): Promise<string> {
+  const connectOptions = browserConnectOptions(endpoint);
+  let puppeteer: typeof import("puppeteer-core");
+  try {
+    puppeteer = await import("puppeteer-core");
+  } catch {
+    throw new ExtractError(
+      `Browser rendering is configured (${endpoint}) but "puppeteer-core" is not installed. ` +
+        `Install it (bun add puppeteer-core) or unset the browser URL.`,
+    );
+  }
+  let browser: Awaited<ReturnType<typeof puppeteer.connect>>;
+  try {
+    browser = await puppeteer.connect(connectOptions);
+  } catch (err) {
+    throw new ExtractError(`Could not connect to the browser at ${endpoint}: ${describeError(err)}`);
+  }
+  try {
+    const page = await browser.newPage();
+    try {
+      await page.goto(url, { waitUntil: "load", timeout: timeoutMs });
+      // Let late XHR/fetch content settle, without failing when the page keeps a socket open.
+      await page.waitForNetworkIdle({ idleTime: 300, timeout: Math.min(timeoutMs, 5000) }).catch(() => {});
+    } catch (err) {
+      throw new ExtractError(`Rendering ${url} in the browser failed: ${describeError(err)}`);
+    }
+    const html = await page.content();
+    if (html.length > maxBytes) {
+      throw new ExtractError(`Refusing to extract from ${url}: rendered HTML exceeds the ${maxBytes} byte limit.`);
+    }
+    return html;
+  } finally {
+    await browser.disconnect().catch(() => {});
+  }
+}
+
 /** Fetch a page and extract filtered content from it. */
 export async function fetchAndExtract(
   url: string,
@@ -536,6 +589,15 @@ export async function fetchAndExtract(
   const fetchFn = deps.fetchFn ?? fetch;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = deps.maxHtmlBytes ?? DEFAULT_MAX_HTML_BYTES;
+  const browserUrl = deps.browserUrl?.trim() || undefined;
+  const viaBrowser = browserUrl
+    ? async (): Promise<ExtractResult> => {
+        const html = deps.renderHtml
+          ? await deps.renderHtml(url)
+          : await renderWithBrowser(url, browserUrl, timeoutMs, maxBytes);
+        return extractFromHtml(html, url, opts);
+      }
+    : null;
 
   // localhost may resolve to ::1 while the target listens on IPv4: retry once.
   const targets = [parsed, ipv4Fallback(parsed)].filter((u): u is URL => u !== null);
@@ -565,11 +627,14 @@ export async function fetchAndExtract(
     }
   }
   if (!res) {
+    if (viaBrowser) return viaBrowser();
     const message = lastNetworkError instanceof Error ? lastNetworkError.message : String(lastNetworkError);
     throw new ExtractError(`Could not fetch ${url}: ${message}`);
   }
 
   if (!res.ok) {
+    // A rendered page often gets through where the plain fetch is blocked.
+    if (viaBrowser) return viaBrowser();
     throw new ExtractError(
       `Fetching ${url} failed: HTTP ${res.status} ${res.statusText}. ` +
         `The page may block bots, require JavaScript, or be behind authentication.`,
@@ -577,6 +642,8 @@ export async function fetchAndExtract(
   }
 
   const contentType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+
+  if (viaBrowser && (!contentType || /html|xml/.test(contentType))) return viaBrowser();
 
   const contentLength = Number(res.headers.get("content-length") ?? 0);
   if (contentLength > maxBytes) {
