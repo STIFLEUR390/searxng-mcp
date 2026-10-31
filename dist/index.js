@@ -55283,7 +55283,7 @@ function formatConfig(config, baseUrl, opts = {}) {
 }
 
 // src/version.ts
-var VERSION = "1.1.0";
+var VERSION = "1.2.0";
 
 // src/server.ts
 var SERVER_NAME = "searxng-mcp";
