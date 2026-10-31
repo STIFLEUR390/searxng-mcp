@@ -47,14 +47,17 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/node": "^26.6.4"
+    "@types/node": "^26.6.4",
+    "@types/turndown": "^5.0.6"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "node-html-parser": "^6.1.0",
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.14",
+    "turndown": "^7.2.4",
     "zod": "^4.6.5"
   }
 }

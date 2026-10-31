@@ -31,7 +31,7 @@ unless the agent asks for them).
 | `searxng_search_videos` | Video search — includes page URL + thumbnail |
 | `searxng_autocomplete` | Query suggestions from the instance's autocomplete provider |
 | `searxng_config` | Instance overview: categories + enabled engines grouped by category |
-| `searxng_extract_content` | Fetch a page and extract readable text with structural filtering |
+| `searxng_extract_content` | Fetch a page and extract its article as Markdown, with structural filtering |
 
 ## Requirements
 
@@ -196,7 +196,9 @@ what the instance can search before picking categories/engines.
 
 ### `searxng_extract_content`
 
-Fetches a page (typically a URL found with the search tools) and returns clean, readable text.
+Fetches a page (typically a URL found with the search tools) and returns the article as clean
+Markdown. Main-content detection uses Mozilla Readability and rendering uses Turndown — the
+same stack as the [clipper.js](https://github.com/philschmid/clipper.js) CLI, minus the browser.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

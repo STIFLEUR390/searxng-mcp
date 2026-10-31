@@ -2,15 +2,18 @@
  * Content extraction with structural filtering (HTML, JSON, plain text).
  *
  * Fetches a page, strips chrome (headers, footers, navigation, sidebars,
- * cookie banners, ads, ...), detects the main content area and renders clean,
- * agent-friendly text. Every removal decision is reported back so the calling
+ * cookie banners, ads, ...), detects the main content area with Mozilla
+ * Readability and renders it as Markdown with Turndown — the same stack the
+ * clipper.js CLI uses. Every removal decision is reported back so the calling
  * agent knows what was filtered out. JSON and plain-text bodies are returned
  * as fenced blocks; binary bodies are refused.
  *
- * Uses node-html-parser (small, zero-dependency DOM subset).
+ * Uses linkedom for the DOM (no jsdom, no headless browser).
  */
 
-import { parse, type HTMLElement, type Node } from "node-html-parser";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
+import TurndownService from "turndown";
 
 import { ipv4Fallback, type FetchFn } from "./client.ts";
 
@@ -76,30 +79,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_HEADINGS = 200;
 const USER_AGENT = "searxng-mcp/1.0 (+https://github.com/STIFLEUR390/searxng-mcp)";
-
-const ENTITY_MAP: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&apos;": "'",
-  "&nbsp;": " ",
-  "&mdash;": "—",
-  "&ndash;": "–",
-  "&hellip;": "…",
-  "&rsquo;": "’",
-  "&lsquo;": "‘",
-  "&ldquo;": "“",
-  "&rdquo;": "”",
-};
-
-/** Strip HTML markup and decode common entities (used for <pre> raw text). */
-function stripTags(raw: string): string {
-  return raw
-    .replace(/<[^>]*>/g, "")
-    .replace(/&[a-z#0-9]+;/gi, (entity) => ENTITY_MAP[entity.toLowerCase()] ?? entity);
-}
 
 /** Tags dropped unconditionally (never useful as content). */
 const ALWAYS_DROP = new Set([
@@ -210,47 +189,7 @@ const SECTION_OPTIONS: Record<Section, keyof ExtractOptions> = {
   comments: "includeComments",
 };
 
-const BLOCK_TAGS = new Set([
-  "address",
-  "article",
-  "aside",
-  "blockquote",
-  "body",
-  "dd",
-  "details",
-  "div",
-  "dl",
-  "dt",
-  "fieldset",
-  "figcaption",
-  "figure",
-  "footer",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "header",
-  "hr",
-  "html",
-  "li",
-  "main",
-  "nav",
-  "ol",
-  "p",
-  "pre",
-  "section",
-  "summary",
-  "table",
-  "tbody",
-  "tfoot",
-  "thead",
-  "tr",
-  "ul",
-]);
-
-function tokenize(value: string | undefined): string[] {
+function tokenize(value: string | null | undefined): string[] {
   if (!value) return [];
   return value
     .toLowerCase()
@@ -258,7 +197,7 @@ function tokenize(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function classify(el: HTMLElement): Section | null {
+function classify(el: Element): Section | null {
   const tag = (el.tagName ?? "").toLowerCase();
   const byTag = SECTION_TAGS[tag];
   if (byTag) return byTag;
@@ -267,10 +206,7 @@ function classify(el: HTMLElement): Section | null {
   const byRole = SECTION_ROLES[role];
   if (byRole) return byRole;
 
-  const tokens = new Set([
-    ...tokenize(el.getAttribute("id")),
-    ...tokenize(el.getAttribute("class")),
-  ]);
+  const tokens = new Set([...tokenize(el.getAttribute("id")), ...tokenize(el.getAttribute("class"))]);
   // Section match only for layout-ish containers to limit false positives.
   if (tag === "div" || tag === "section" || tag === "ul" || tag === "ol" || tag === "form" || tag === "span") {
     for (const [section, sectionTokens] of Object.entries(SECTION_TOKENS)) {
@@ -283,7 +219,7 @@ function classify(el: HTMLElement): Section | null {
 }
 
 /** Remove chrome from the DOM in place. Records what was removed. */
-function cleanDom(root: HTMLElement, opts: ExtractOptions, removed: Set<Section>): void {
+function cleanDom(root: Element, opts: ExtractOptions, removed: Set<Section>): void {
   // 1. Always-drop tags and hidden nodes.
   for (const el of root.querySelectorAll([...ALWAYS_DROP].join(","))) {
     el.remove();
@@ -293,6 +229,7 @@ function cleanDom(root: HTMLElement, opts: ExtractOptions, removed: Set<Section>
   }
 
   // 2. Structural sections + noise, unless the caller opted in.
+  const bodyLen = (root.textContent ?? "").length;
   const candidates = root.querySelectorAll("header, footer, nav, aside, div, section, ul, ol, form, span, [role]");
   for (const el of candidates) {
     const tokens = new Set([...tokenize(el.getAttribute("id")), ...tokenize(el.getAttribute("class"))]);
@@ -300,8 +237,14 @@ function cleanDom(root: HTMLElement, opts: ExtractOptions, removed: Set<Section>
 
     const section = classify(el);
     if (section && opts[SECTION_OPTIONS[section]] !== true) {
-      drop = true;
-      removed.add(section);
+      // A class token can land on a layout wrapper by accident (e.g. a CSS var
+      // named --banner-height): never drop an element holding most of the page.
+      const tag = (el.tagName ?? "").toLowerCase();
+      const strong = SECTION_TAGS[tag] !== undefined || SECTION_ROLES[(el.getAttribute("role") ?? "").toLowerCase()] !== undefined;
+      if (strong || (el.textContent ?? "").length <= bodyLen * 0.6) {
+        drop = true;
+        removed.add(section);
+      }
     }
     if (!drop && tokens.size > 0) {
       for (const token of tokens) {
@@ -315,67 +258,6 @@ function cleanDom(root: HTMLElement, opts: ExtractOptions, removed: Set<Section>
   }
 }
 
-function renderChildren(el: HTMLElement, opts: ExtractOptions): string {
-  let out = "";
-  for (const child of el.childNodes) {
-    out += renderNode(child, opts);
-  }
-  return out;
-}
-
-function renderNode(node: Node, opts: ExtractOptions): string {
-  const maybeEl = node as Partial<HTMLElement> & { text?: string };
-  const tag = maybeEl.tagName;
-
-  // Text node.
-  if (typeof tag !== "string" || tag === "") {
-    return typeof maybeEl.text === "string" ? maybeEl.text : "";
-  }
-  // Comments and processing instructions.
-  if (node.nodeType !== 1) return "";
-
-  const el = node as HTMLElement;
-  const upper = tag.toUpperCase();
-  if (ALWAYS_DROP.has(upper.toLowerCase()) || upper === "TITLE") return "";
-
-  if (upper === "IMG") {
-    if (!opts.includeImages) return "";
-    const src = el.getAttribute("src") ?? "";
-    if (!src) return "";
-    return `\n![${el.getAttribute("alt") ?? ""}](${src})\n`;
-  }
-  if (upper === "BR") return "\n";
-  if (upper === "HR") return "\n---\n";
-
-  if (upper === "PRE") {
-    // node-html-parser keeps <pre> as a single raw text node: strip real tags
-    // first, then decode entities. textContent is already entity-decoded, so
-    // using it would destroy entity-encoded text such as &lt;div&gt;.
-    return `\n\`\`\`\n${stripTags(el.rawText).trim()}\n\`\`\`\n`;
-  }
-
-  const inner = renderChildren(el, opts);
-
-  if (upper === "A") {
-    const href = el.getAttribute("href") ?? "";
-    const text = inner.trim();
-    if (!text) return "";
-    if (opts.includeLinks && href && !href.startsWith("javascript:") && !href.startsWith("#")) {
-      return `[${text}](${href})`;
-    }
-    return text;
-  }
-  if (/^H[1-6]$/.test(upper)) {
-    const level = Number(upper[1] ?? "1");
-    return `\n\n${"#".repeat(level)} ${inner.trim()}\n\n`;
-  }
-  if (upper === "LI") return `\n- ${inner.trim()}`;
-  if (upper === "TD" || upper === "TH") return ` ${inner.trim()} |`;
-  if (upper === "TR") return `\n|${inner.trim()}`;
-  if (BLOCK_TAGS.has(upper.toLowerCase())) return `\n${inner}\n`;
-  return inner;
-}
-
 function normalizeText(raw: string): string {
   return raw
     .replace(/\r\n?/g, "\n")
@@ -387,9 +269,40 @@ function normalizeText(raw: string): string {
     .trim();
 }
 
-function findContentRoot(root: HTMLElement): HTMLElement {
-  const body = root.querySelector("body") ?? root;
-  let best: HTMLElement | null = null;
+/** Turndown instance matching the requested link/image handling. */
+function createTurndown(opts: ExtractOptions): TurndownService {
+  const td = new TurndownService({
+    headingStyle: "atx",
+    codeBlockStyle: "fenced",
+    bulletListMarker: "-",
+    emDelimiter: "_",
+  });
+  if (!opts.includeLinks) {
+    td.addRule("plainLinks", {
+      filter: (node) => node.nodeName === "A",
+      replacement: (content) => content,
+    });
+  }
+  td.addRule("images", {
+    filter: "img",
+    replacement: (_content, node) => {
+      if (!opts.includeImages) return "";
+      const el = node as Element;
+      const src = el.getAttribute("src") ?? "";
+      if (!src) return "";
+      return `![${el.getAttribute("alt") ?? ""}](${src})`;
+    },
+  });
+  return td;
+}
+
+/** Render an HTML fragment as normalized Markdown. */
+function toMarkdown(html: string, opts: ExtractOptions): string {
+  return normalizeText(createTurndown(opts).turndown(html));
+}
+
+function findContentRoot(body: Element): Element {
+  let best: Element | null = null;
   let bestLen = 0;
   for (const el of body.querySelectorAll("article, main, [role='main']")) {
     const len = (el.textContent ?? "").length;
@@ -398,16 +311,27 @@ function findContentRoot(root: HTMLElement): HTMLElement {
       bestLen = len;
     }
   }
-  if (best && bestLen > 200) return best;
-  return body;
+  return best ?? body;
 }
 
-/** Whether `el` is `ancestor` or lives inside it (node-html-parser has no contains()). */
-function isWithin(el: HTMLElement, ancestor: HTMLElement): boolean {
-  let cur: HTMLElement | undefined = el;
+/** Main-content HTML via Readability, or null when it finds nothing usable. */
+function readArticle(document: Document): string | null {
+  try {
+    const article = new Readability(document.cloneNode(true) as Document).parse();
+    const content = typeof article?.content === "string" ? article.content : "";
+    return content.trim() ? content : null;
+  } catch {
+    // Readability is best-effort: fall back to the article/main heuristic.
+    return null;
+  }
+}
+
+/** Whether `el` is `ancestor` or lives inside it. */
+function isWithin(el: Element, ancestor: Element): boolean {
+  let cur: Element | null = el;
   while (cur) {
     if (cur === ancestor) return true;
-    cur = cur.parentNode as HTMLElement | undefined;
+    cur = cur.parentElement;
   }
   return false;
 }
@@ -417,11 +341,11 @@ function isWithin(el: HTMLElement, ancestor: HTMLElement): boolean {
  * nav/header/footer live outside <main>) are rendered and appended, so the
  * opt-in is honored even with the default content_only scope.
  */
-function renderKeptOutsideScope(root: HTMLElement, scope: HTMLElement, opts: ExtractOptions): string {
+function renderKeptOutsideScope(root: Element, scope: Element, opts: ExtractOptions): string[] {
   const wanted = (Object.keys(SECTION_OPTIONS) as Section[]).filter((s) => opts[SECTION_OPTIONS[s]] === true);
-  if (wanted.length === 0) return "";
+  if (wanted.length === 0) return [];
   const candidates = root.querySelectorAll("header, footer, nav, aside, div, section, ul, ol, form, span, [role]");
-  const appended: HTMLElement[] = [];
+  const appended: Element[] = [];
   const parts: string[] = [];
   for (const el of candidates) {
     const section = classify(el);
@@ -431,68 +355,10 @@ function renderKeptOutsideScope(root: HTMLElement, scope: HTMLElement, opts: Ext
     if (isWithin(el, scope) || isWithin(scope, el)) continue;
     if (appended.some((a) => isWithin(el, a))) continue;
     appended.push(el);
-    parts.push(renderNode(el, opts));
+    const md = toMarkdown(el.outerHTML, opts);
+    if (md) parts.push(md);
   }
-  return normalizeText(parts.join("\n\n"));
-}
-
-/**
- * Pure extraction from an HTML string. Fetch separately with fetchAndExtract.
- */
-export function extractFromHtml(html: string, url: string, opts: ExtractOptions = {}): ExtractResult {
-  const root = parse(html, {
-    lowerCaseTagName: true,
-    comment: false,
-    // script/style/noscript content is dropped; <pre> stays raw text (tags stripped at render).
-    blockTextElements: { script: false, noscript: false, style: false, pre: true },
-  });
-
-  const title = (root.querySelector("title")?.text ?? "").trim();
-  const description =
-    root.querySelector("meta[name='description']")?.getAttribute("content")?.trim() ||
-    root.querySelector("meta[property='og:description']")?.getAttribute("content")?.trim() ||
-    undefined;
-  const lang = root.querySelector("html")?.getAttribute("lang")?.trim() || undefined;
-
-  const removed = new Set<Section>();
-  cleanDom(root, opts, removed);
-
-  if (opts.headingsOnly) {
-    const headings: Heading[] = [];
-    collectHeadings(root, headings);
-    const shown = headings.slice(0, MAX_HEADINGS);
-    let outline = shown.map((h) => `${"#".repeat(h.level)} ${h.text}`).join("\n");
-    if (headings.length > shown.length) {
-      outline += `\n\n[… ${headings.length - shown.length} more headings omitted]`;
-    }
-    return finish(url, title, description, lang, outline || "(no headings found)", removed, opts);
-  }
-
-  let scope: HTMLElement;
-  if (opts.selector) {
-    const matches = root.querySelectorAll(opts.selector);
-    if (matches.length === 0) {
-      throw new ExtractError(
-        `No element matches selector "${opts.selector}" on ${url}. ` +
-          `Try a simpler selector (e.g. "article", ".post-content") or remove the selector option.`,
-      );
-    }
-    const parts = matches.map((m) => renderNode(m, opts));
-    const content = normalizeText(parts.join("\n\n"));
-    return finish(url, title, description, lang, content, removed, opts);
-  }
-
-  let content: string;
-  if (opts.contentOnly !== false) {
-    scope = findContentRoot(root);
-    content = normalizeText(renderNode(scope, opts));
-    const kept = renderKeptOutsideScope(root, scope, opts);
-    if (kept) content = `${content}\n\n${kept}`;
-  } else {
-    scope = root.querySelector("body") ?? root;
-    content = normalizeText(renderNode(scope, opts));
-  }
-  return finish(url, title, description, lang, content, removed, opts);
+  return parts;
 }
 
 interface Heading {
@@ -501,17 +367,77 @@ interface Heading {
 }
 
 /** Collect h1–h6 in document order (removed chrome is already detached). */
-function collectHeadings(node: Node, out: Heading[]): void {
-  for (const child of node.childNodes) {
-    const el = child as HTMLElement;
-    const tag = (el.tagName ?? "").toLowerCase();
+function collectHeadings(node: Element, out: Heading[]): void {
+  for (const child of node.children) {
+    const tag = (child.tagName ?? "").toLowerCase();
     if (/^h[1-6]$/.test(tag)) {
-      const text = normalizeText(el.text ?? "");
+      const text = normalizeText(child.textContent ?? "");
       if (text) out.push({ level: Number(tag.slice(1)), text });
       continue;
     }
-    if (el.childNodes?.length) collectHeadings(el, out);
+    collectHeadings(child, out);
   }
+}
+
+/**
+ * Pure extraction from an HTML string. Fetch separately with fetchAndExtract.
+ */
+export function extractFromHtml(html: string, url: string, opts: ExtractOptions = {}): ExtractResult {
+  const { document } = parseHTML(html);
+
+  const title = (document.querySelector("title")?.textContent ?? "").trim();
+  const description =
+    document.querySelector("meta[name='description']")?.getAttribute("content")?.trim() ||
+    document.querySelector("meta[property='og:description']")?.getAttribute("content")?.trim() ||
+    undefined;
+  const lang = document.querySelector("html")?.getAttribute("lang")?.trim() || undefined;
+
+  const body = document.body;
+  const removed = new Set<Section>();
+  if (!body) {
+    return finish(url, title, description, lang, "", removed, opts);
+  }
+  cleanDom(body, opts, removed);
+
+  if (opts.headingsOnly) {
+    const headings: Heading[] = [];
+    collectHeadings(body, headings);
+    const shown = headings.slice(0, MAX_HEADINGS);
+    let outline = shown.map((h) => `${"#".repeat(h.level)} ${h.text}`).join("\n");
+    if (headings.length > shown.length) {
+      outline += `\n\n[… ${headings.length - shown.length} more headings omitted]`;
+    }
+    return finish(url, title, description, lang, outline || "(no headings found)", removed, opts);
+  }
+
+  if (opts.selector) {
+    const matches = body.querySelectorAll(opts.selector);
+    if (matches.length === 0) {
+      throw new ExtractError(
+        `No element matches selector "${opts.selector}" on ${url}. ` +
+          `Try a simpler selector (e.g. "article", ".post-content") or remove the selector option.`,
+      );
+    }
+    const content = Array.from(matches)
+      .map((m) => toMarkdown(m.outerHTML, opts))
+      .filter(Boolean)
+      .join("\n\n");
+    return finish(url, title, description, lang, content, removed, opts);
+  }
+
+  let content: string;
+  if (opts.contentOnly !== false) {
+    const scope = findContentRoot(body);
+    const articleHtml = readArticle(document);
+    content = toMarkdown(articleHtml ?? scope.outerHTML, opts);
+    for (const kept of renderKeptOutsideScope(body, scope, opts)) {
+      // Readability sometimes returns chrome the scope check cannot see.
+      if (!content.includes(kept)) content = `${content}\n\n${kept}`;
+    }
+  } else {
+    content = toMarkdown(body.outerHTML, opts);
+  }
+  return finish(url, title, description, lang, content, removed, opts);
 }
 
 interface WindowedText {
@@ -564,12 +490,7 @@ function finish(
 }
 
 /** Render non-HTML bodies (JSON, plain text, ...) as fenced blocks. */
-function renderPlainBody(
-  body: string,
-  url: string,
-  opts: ExtractOptions,
-  kind: "json" | "text",
-): ExtractResult {
+function renderPlainBody(body: string, url: string, opts: ExtractOptions, kind: "json" | "text"): ExtractResult {
   let pretty = body;
   if (kind === "json") {
     try {
@@ -666,9 +587,7 @@ export async function fetchAndExtract(
 
   const body = await res.text();
   if (body.length > maxBytes) {
-    throw new ExtractError(
-      `Refusing to extract from ${url}: body is larger than the ${maxBytes} byte limit.`,
-    );
+    throw new ExtractError(`Refusing to extract from ${url}: body is larger than the ${maxBytes} byte limit.`);
   }
 
   if (contentType.includes("json")) {

@@ -62,13 +62,14 @@ flowchart LR
 | `index.ts` | CLI parsing (`--url`, `--help`, `--version`), config resolution, stdio wiring. Logs to **stderr only** (stdout is the MCP channel). |
 | `src/config.ts` | Argument/env parsing, base-URL normalization and validation. |
 | `src/client.ts` | Typed client for the SearXNG JSON API with injectable `fetch`, timeouts, and actionable error messages. |
-| `src/extract.ts` | Page fetch (size/type guards), DOM cleaning (chrome + noise removal), main-content detection, text rendering. |
+| `src/extract.ts` | Page fetch (size/type guards), DOM cleaning (chrome + noise removal), main-content detection (Mozilla Readability), Markdown rendering (Turndown). |
 | `src/format.ts` | Rendering of SearXNG responses into markdown-ish text; domain filtering of results. |
 | `src/server.ts` | `McpServer` construction and registration of the 7 tools (Zod input schemas, tool annotations). |
 | `src/types.ts` | TypeScript types mirroring the SearXNG JSON API. |
 
-Dependencies: `@modelcontextprotocol/sdk`, `zod` (v4, aligned with the SDK), `node-html-parser`
-(lightweight HTML DOM subset). No HTTP framework, no cheerio/jsdom.
+Dependencies: `@modelcontextprotocol/sdk`, `zod` (v4, aligned with the SDK), `linkedom`
+(lightweight DOM), `@mozilla/readability` and `turndown` (the clipper.js HTML→Markdown stack).
+No HTTP framework, no jsdom, no headless browser.
 
 ## 4. Configuration
 
@@ -241,14 +242,14 @@ Behavioral guarantees:
 - `headings_only`: heading outline collected in document order after chrome removal (max 200,
   omitted count reported); `(no headings found)` when the page has none.
 - `start_char`/`max_length` window the (cleaned) content; the header reports the window offset.
-- extraction pipeline: parse DOM → capture metadata → remove chrome/noise → locate content
-  root → render text → window/truncate.
+- extraction pipeline: parse DOM → capture metadata → remove chrome/noise → Mozilla Readability
+  main-content detection → Turndown Markdown → window/truncate.
 - `selector` with zero matches → recoverable tool error suggesting simpler selectors.
 
 ## 7. Extraction & filtering specification
 
-Implemented in `src/extract.ts` on top of `node-html-parser` (parse options:
-`comment: false`, script/noscript/style content dropped, `<pre>` kept as raw text).
+Implemented in `src/extract.ts` on top of `linkedom` (DOM), `@mozilla/readability` (main-content
+selection) and `turndown` (HTML → Markdown) — the same stack the clipper.js CLI uses.
 
 ### 7.1 Removal tiers
 
@@ -276,24 +277,24 @@ Token classification applies to layout-ish tags only (`div`, `section`, `ul`, `o
 
 ### 7.2 Content root detection
 
-With `content_only` (default), the element among `article`, `main`, `[role=main]` with the most
-text (more than 200 chars) becomes the extraction scope; otherwise the cleaned `<body>`, else the root.
+With `content_only` (default), Mozilla Readability selects the article body from the cleaned DOM.
+When Readability finds nothing usable (short pages, non-article layouts), the element among
+`article`, `main`, `[role=main]` with the most text becomes the scope; otherwise the cleaned
+`<body>`.
 Sections kept via `include_*` that sit outside the extraction scope (typical: `nav`, `header`,
 `footer` outside `<main>`) are rendered and appended after the scope content, so the opt-in is
 honored even with the default scope. `selector` mode never appends (exact extraction).
 
-### 7.3 Rendering rules
+### 7.3 Rendering rules (Turndown)
 
-- block tags (`p`, `div`, `h1–h6`, `li`, `blockquote`, `pre`, `table` rows, ...) become
-  newlines; headings become `#`/`##`; list items become `- `; `br` → newline, `hr` → `---`;
-- `<pre>` raw text has real tags stripped and entities decoded (entity-encoded text such as
-  `&lt;div&gt;` is preserved as visible text), then wrapped in ``` fences;
-- links: text only by default, `[text](href)` when `include_links` (skipping `javascript:`
-  and fragment-only hrefs);
+- Markdown: ATX headings, `-` bullets, fenced code blocks, blockquotes, emphasis, rules;
+- links: text only by default, `[text](href)` when `include_links`;
 - images: dropped by default, `![alt](src)` when `include_images`;
 - whitespace normalized: line trailing spaces trimmed, runs of spaces collapsed, blank-line
   runs collapsed to one;
 - truncation appends `[... truncated at <n> characters — raise max_length to get more]`.
+- Readability may drop an `<h1>` that duplicates the page title; the title is still reported
+  in the tool header.
 
 ## 8. Error handling
 
@@ -325,7 +326,7 @@ Fatal (non-tool) errors at startup: config problems → stderr + exit 2; unexpec
 - `bin`: `searxng-mcp` → `dist/index.js` (bundled, `#!/usr/bin/env node`, executable bit set,
   `--target=node` so Node >= 18 runs it; `bun dist/index.js` also works).
 - Build: `bun build ./index.ts --target=node --outdir=dist` — single self-contained file
-  (SDK + zod + node-html-parser bundled).
+  (SDK + zod + linkedom + Readability + Turndown bundled, ~1.8 MB).
 - `dist/` is **committed** so installs from GitHub work without a build step. Validated flows:
   `bun install -g github:...` (binary on PATH, MCP handshake OK),
   `npm pack github:... && npm install -g <tgz>` (direct `npm install -g github:...` is broken

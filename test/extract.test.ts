@@ -90,8 +90,9 @@ describe("extractFromHtml", () => {
 
   test("contentOnly picks the article area", () => {
     const result = extractFromHtml(PAGE, "https://mysite.org/article", { contentOnly: true });
-    expect(result.content).toContain("My Article");
+    expect(result.content).toContain("First paragraph of the real content.");
     expect(result.content).toContain("Point one");
+    expect(result.content).not.toContain("Menu A");
   });
 
   test("code blocks keep their content without leaking tags", () => {
